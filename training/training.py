@@ -1,5 +1,6 @@
 from models.encoder import Common_Shared_Encoder, Exclusive_Shared_Encoder, Exclusive_Specific_Encoder, Shared_Feature_extractor
 from models.decoder import Decoder
+from models.mlp import MLP
 # from dataloader.dataloader import load_dataloader
 from dataloader.dataloader import load_recon_dataloader
 from dataloader.dataloader import load_time_dataloader
@@ -168,8 +169,9 @@ class Trainer():
     
     def build_model(self):
         self.bertmodel = AutoModel.from_pretrained("bert-base-uncased")
-        # this linear layer is to pool all the 10 future posts to a bert embedding with same size of query post
-        #self.linear_bert = torch.nn.Linear()
+        self.mlp = MLP().to(self.device)
+        self.fc_mlp_ntm = torch.nn.Linear(768+128, 768+128).to(self.device)
+        
         self.zx_encoder = Exclusive_Specific_Encoder().to(self.device)
         self.zy_encoder = Exclusive_Specific_Encoder().to(self.device)
         
@@ -242,6 +244,16 @@ class Trainer():
 
         return rec_loss(recon, input)
     
+    def cls_loss(self, pred, true):
+        loss = torch.nn.CrossEntropyLoss()
+        print(pred)
+        print(true)
+        print(pred.size())
+        print(true.size())
+        mlp_loss = loss(pred, true)
+        
+        return mlp_loss
+    
     def KLD_loss_v1(self, mu, log_var):
         kld_loss = torch.mean(-0.5 * torch.sum(1 + log_var - mu ** 2 - log_var.exp(), dim = 1), dim = 0)
         return kld_loss
@@ -250,7 +262,7 @@ class Trainer():
         kld_loss = torch.mean(-0.5 * torch.sum(1 + (log_var0 - log_var1) - ((mu0 - mu1) ** 2 + log_var0.exp()/log_var1.exp()), dim = 1), dim = 0)
         return self.kld_weight * kld_loss
 
-    def loss_function(self, recon_X, recon_Y, input_X, input_Y, zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var):
+    def loss_function(self, recon_X, recon_Y, input_X, input_Y, zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, pred_cls_label, cls_label):
 
         recon_X_loss = self.reconstruction_loss(recon_X, input_X, "L1")
         recon_Y_loss = self.reconstruction_loss(recon_Y, input_Y, "L1")
@@ -265,12 +277,14 @@ class Trainer():
 
         reg_coeff = (1.0 - ((-1)*torch.tensor(self.global_iters, dtype = torch.float32)/25000.0).exp()).to(self.device)
 
+        mlp_loss = self.cls_loss(pred_cls_label, cls_label)
+        print('mlp_loss: '+str(mlp_loss*100))
         total_loss = self.rec_weight * (recon_X_loss + recon_Y_loss) \
                     + reg_coeff * self.X_kld_weight * (kl_X_loss + kl_Y_loss) \
                     + reg_coeff * self.S_kld_weight * (kl_S_loss) \
-                    + self.inter_kld_weight * (kl_interX_loss + kl_interY_loss)
-
-        return total_loss , [recon_X_loss.item(), recon_Y_loss.item(), kl_X_loss.item(), kl_Y_loss.item(), kl_S_loss.item(), kl_interX_loss.item(), kl_interY_loss.item()]
+                    + self.inter_kld_weight * (kl_interX_loss + kl_interY_loss) + mlp_loss*100
+        print('total_loss: '+str(total_loss))
+        return total_loss , [recon_X_loss.item(), recon_Y_loss.item(), kl_X_loss.item(), kl_Y_loss.item(), kl_S_loss.item(), kl_interX_loss.item(), kl_interY_loss.item(), mlp_loss.item()]
 
     # def Unpack_Data(self, data):
     #     X_image = data["X"].detach().float().to(self.device)
@@ -305,7 +319,9 @@ class Trainer():
         # no grad no backward
         X_query_bows=X_query_bows.detach().float().to(self.device)
         Y_future_bows=Y_future_bows.detach().float().to(self.device)
-        cls_labels=cls_labels.detach().float().to(self.device)
+        query_bert_embedding = query_bert_embedding.to(self.device)
+        ave_future_embedding = ave_future_embedding.to(self.device)
+        cls_labels=cls_labels.detach().to(self.device)
         
         return X_query_bows, Y_future_bows, query_bert_embedding, ave_future_embedding, cls_labels
                
@@ -331,6 +347,7 @@ class Trainer():
         print("Start Training...")
         start_time = time.time()
         while self.global_iters <= self.max_iters:
+            print('self.global_iters: '+str(self.global_iters)+' / self.max_iters: '+str(self.max_iters)+' / '+str(float(self.max_iters)/(self.global_iters*100))+'%')
             try:
                 input_X, input_Y, query_bert, future_bert, cls_label = self.Unpack_Data(next(data_iter))
             except:
@@ -353,10 +370,15 @@ class Trainer():
 
             recon_X = self.x_decoder(zx, zs)
             recon_Y = self.y_decoder(zy, zs)
+            
+            mlp_input = torch.cat((query_bert, zs), dim=1)
+            # mlp_input = mlp_input.to(self.device)
+            
+            pred_cls_label = self.mlp(self.fc_mlp_ntm(mlp_input))
 
             loss, item = self.loss_function(recon_X, recon_Y, input_X, input_Y, 
                                     zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
-                                    zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var)
+                                    zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, pred_cls_label, cls_label)
             
 
             loss.backward()
@@ -368,100 +390,10 @@ class Trainer():
             self.scheduler_shr_enc.step()
             self.scheduler_dec.step()
             
-            loss_item = {}
-            loss_item["recon_X_loss"] = item[0]
-            loss_item["recon_Y_loss"] = item[1]
-            loss_item["kl_X_loss"] = item[2]
-            loss_item["kl_Y_loss"] = item[3]
-            loss_item["kl_S_loss"] = item[4]
-            loss_item["kl_interX_loss"] = item[5]
-            loss_item["kl_interY_loss"] = item[6]
-            loss_item["total_loss"] = loss.item()
+        if self.max_iters / self.global_iters == 10:
+            print(str(self.which_loader)+' loss: '+str(loss))
 
-            if self.global_iters % self.print_freq == 0:
-                et = time.time() - start_time
-                et = str(datetime.timedelta(seconds=et))[:-7]
-                log = "Elapsed [{}], Iteration[{}/{}]".format(et, self.global_iters, self.max_iters)
-                for tag, value in loss_item.items():
-                    log += ", {}: {:4f}".format(tag, value)
-                print(log)
-
-                for tag, value in loss_item.items():
-                    self.logger.scalar_summary(tag, value, self.global_iters)
-            
-
-            if self.global_iters % self.sample_freq == 0:
-                with torch.no_grad():
-                    ith_sample_dir = os.path.join(self.sample_dir, str(self.global_iters))
-                    if not os.path.exists(ith_sample_dir):
-                        os.makedirs(ith_sample_dir)
-
-                    z_x_mu, z_x_logvar, z_x = self.zx_encoder(X_fixed)
-                    z_y_mu, z_y_logvar, z_y = self.zy_encoder(Y_fixed)
-                    fx = self.FE(X_fixed)
-                    fy = self.FE(Y_fixed)
-                    zx_s_mu, zx_s_logvar , zx_s = self.zx_s_encoder(fx)
-                    zy_s_mu, zy_s_logvar , zy_s = self.zy_s_encoder(fy)
-                    z_s_mu_, _ , z_s = self.zs_encoder(fx, fy)
-
-                    X_fake_list = [Y_fixed]
-                    Y_fake_list = [X_fixed]
-
-                    recon_X = self.x_decoder(z_x, z_s)
-                    Y2X = self.x_decoder(z_x_mu, zy_s_mu)
-                    rand0_Y2X= self.x_decoder(torch.randn_like(z_x_logvar), zy_s_mu)
-                    rand1_Y2X= self.x_decoder(torch.randn_like(z_x_logvar), zy_s_mu)
-                    rand2_Y2X= self.x_decoder(torch.randn_like(z_x_logvar), zy_s_mu)
-                    X_fake_list.append(recon_X)
-                    X_fake_list.append(Y2X)
-                    X_fake_list.append(rand0_Y2X)
-                    X_fake_list.append(rand1_Y2X)
-                    X_fake_list.append(rand2_Y2X)
-                    X_fake_list.append(X_fixed)
-
-                    recon_Y = self.y_decoder(z_y, z_s)
-                    X2Y =  self.y_decoder(z_y_mu, zx_s_mu)
-                    rand0_X2Y = self.y_decoder(torch.randn_like(z_y_logvar), zx_s_mu)
-                    rand1_X2Y = self.y_decoder(torch.randn_like(z_y_logvar), zx_s_mu)
-                    rand2_X2Y = self.y_decoder(torch.randn_like(z_y_logvar), zx_s_mu)
-                    Y_fake_list.append(recon_Y)
-                    Y_fake_list.append(X2Y)                
-                    Y_fake_list.append(rand0_X2Y)                
-                    Y_fake_list.append(rand1_X2Y)                
-                    Y_fake_list.append(rand2_X2Y)  
-                    Y_fake_list.append(Y_fixed)              
-                    
-                    X_concat = torch.cat(X_fake_list, dim=3)
-                    Y_concat = torch.cat(Y_fake_list, dim=3)
-                    sampleX_path = os.path.join(ith_sample_dir, "Y2X.jpg")
-                    sampleY_path = os.path.join(ith_sample_dir, "X2Y.jpg")
-
-                    save_image(self.denorm(X_concat.cpu()), sampleX_path, nrow=1, padding =0)
-                    save_image(self.denorm(Y_concat.cpu()), sampleY_path, nrow=1, padding =0)
-                    print('Saved samples into {}...'.format(ith_sample_dir))
-
-            if self.global_iters % self.model_save_freq == 0:
-                    model_path = os.path.join(self.model_save_dir, "{}-checkpoint.pt".format(self.global_iters))
-                    torch.save({
-                        'iters': self.global_iters,
-                        'zx_encoder': self.zx_encoder.state_dict(),
-                        'zy_encoder': self.zy_encoder.state_dict(),
-                        'FE': self.FE.state_dict(),
-                        'zs_encoder': self.zs_encoder.state_dict(),
-                        'zx_s_encoder': self.zx_s_encoder.state_dict(),
-                        'zy_s_encoder': self.zy_s_encoder.state_dict(),
-                        'x_decoder': self.x_decoder.state_dict(),
-                        'y_decoder': self.y_decoder.state_dict(),
-                        'optimizer_exc_enc': self.optimizer_exc_enc.state_dict(),
-                        'optimizer_shr_enc': self.optimizer_shr_enc.state_dict(),
-                        'optimizer_dec': self.optimizer_dec.state_dict(),
-                        'scheduler_exc_enc': self.scheduler_exc_enc.state_dict(),
-                        'scheduler_shr_enc':self.scheduler_shr_enc.state_dict(),
-                        'scheduler_dec': self.scheduler_dec.state_dict()    
-                    }, model_path)
-                    # torch.save(self.model.state_dict(), model_path)
-                    print('Saved model checkpoints into {}...'.format(self.model_save_dir))
-            
+        
 
     def test(self):
 
