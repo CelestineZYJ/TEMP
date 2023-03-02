@@ -102,9 +102,37 @@ trainer = Trainer(device,
                 test_iters = test["test_iters"],
                 test_path = test["test_path"])
 
-if train:
-    trainer.train()
-else:
-    trainer.test()
+trainer.train()
+
+which_loader = 'time_test'
+trainer = Trainer(device, 
+                train= train,
+                which_loader = which_loader,
+                directory = directory,
+                dataset = config["dataset"],
+                path_to_data = path_to_data,
+                batch_size = batch_size,
+                bow_vocab_size = bow_vocab_size,
+                max_iters = training["max_iters"],
+                resume_iters = training["resume_iters"],
+                restored_model_path = training["restored_model_path"],
+                lr = training["lr"],
+                weight_decay = training["weight_decay"],
+                beta1 = training["beta1"],
+                beta2 = training["beta2"],
+                milestones = training["milestones"],
+                scheduler_gamma = training["scheduler_gamma"],
+                rec_weight = training["rec_weight"],
+                X_kld_weight = training["X_kld_weight"],
+                S_kld_weight = training["S_kld_weight"],
+                inter_kld_weight = training["inter_kld_weight"],
+                print_freq = training["print_freq"],
+                sample_freq = training["sample_freq"],
+                model_save_freq = training["model_save_freq"],
+                test_iters = test["test_iters"],
+                test_path = test["test_path"])
+
+trainer.test()
     
+
 
