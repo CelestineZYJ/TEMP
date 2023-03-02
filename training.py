@@ -13,16 +13,18 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torchvision.utils import save_image
+from transformers import AutoModel
 
 from training.logger import Logger
 
 
 class Trainer():
 
-    def __init__(self, device, train, directory, dataset, path_to_data, batch_size, bow_vocab_size, max_iters, resume_iters, restored_model_path, lr, weight_decay, beta1, beta2, milestones, scheduler_gamma, rec_weight, X_kld_weight, S_kld_weight, inter_kld_weight, print_freq, sample_freq, model_save_freq, test_iters, test_path):
+    def __init__(self, device, train, which_loader, directory, dataset, path_to_data, batch_size, bow_vocab_size, max_iters, resume_iters, restored_model_path, lr, weight_decay, beta1, beta2, milestones, scheduler_gamma, rec_weight, X_kld_weight, S_kld_weight, inter_kld_weight, print_freq, sample_freq, model_save_freq, test_iters, test_path):
 
         self.device = device
         self.train_bool = train
+        self.which_loader = which_loader
         ##############
         # Directory Setting
         ###############
@@ -51,34 +53,51 @@ class Trainer():
         ##################
         # Data Loader
         ##################
+        data_length = {'recon_train':0, 'recon_valid':0, 'time_train':0, 'time_valid':0, 'time_test':0}
         self.dataset = dataset
         self.path_to_data = path_to_data
         self.batch_size = batch_size
         self.bow_vocab_size = bow_vocab_size
         
-        self.train_recon_data_loader, data_length, train_bow_vocab_list = load_recon_dataloader(dataset = self.dataset, 
-                                                        path_to_data = self.path_to_data['train'],
+        self.train_recon_data_loader, data_length[self.which_loader], train_bow_vocab_list = load_recon_dataloader(dataset = self.dataset, 
+                                                        path_to_data = self.path_to_data['recon_train'],
                                                         train = True,
                                                         batch_size= self.batch_size,
                                                         bow_vocab_size = self.bow_vocab_size,
                                                         bow_vocab_list=[]
                                                         )
         
-        self.valid_recon_data_loader, data_length, _ = load_recon_dataloader(dataset = self.dataset, 
-                                                        path_to_data = self.path_to_data['valid'],
+        self.valid_recon_data_loader, data_length[self.which_loader], _ = load_recon_dataloader(dataset = self.dataset, 
+                                                        path_to_data = self.path_to_data['recon_valid'],
                                                         train = False,
                                                         batch_size= self.batch_size,
                                                         bow_vocab_size = self.bow_vocab_size,
                                                         bow_vocab_list=train_bow_vocab_list
                                                         )
-        self.test_time_data_loader, data_length, _ = load_time_dataloader(dataset = self.dataset, 
-                                                        path_to_data = self.path_to_data['test'],
-                                                        train = False,
-                                                        batch_size= self.batch_size,
-                                                        bow_vocab_size = self.bow_vocab_size,
-                                                        bow_vocab_list=train_bow_vocab_list
-                                                        )
+        # self.train_time_data_loader, data_length[self.which_loader], _ = load_time_dataloader(dataset = self.dataset, 
+        #                                                 path_to_data = self.path_to_data['time_train'],
+        #                                                 train = False,
+        #                                                 batch_size= self.batch_size,
+        #                                                 bow_vocab_size = self.bow_vocab_size,
+        #                                                 bow_vocab_list=[]
+        #                                                 )
         
+        # self.valid_time_data_loader, data_length[self.which_loader], _ = load_time_dataloader(dataset = self.dataset, 
+        #                                                 path_to_data = self.path_to_data['time_valid'],
+        #                                                 train = False,
+        #                                                 batch_size= self.batch_size,
+        #                                                 bow_vocab_size = self.bow_vocab_size,
+        #                                                 bow_vocab_list=train_bow_vocab_list
+        #                                                 )
+        self.test_time_data_loader, data_length[self.which_loader], _ = load_time_dataloader(dataset = self.dataset, 
+                                                        path_to_data = self.path_to_data['time_test'],
+                                                        train = False,
+                                                        batch_size= self.batch_size,
+                                                        bow_vocab_size = self.bow_vocab_size,
+                                                        bow_vocab_list=train_bow_vocab_list
+                                                        )
+        self.all_data_loader = {"recon_train":self.train_recon_data_loader, "recon_valid":self.valid_recon_data_loader, "time_train":self.test_time_data_loader}
+        self.data_loader = self.all_data_loader[self.which_loader]
         
         # self.data_loader , data_length = load_dataloader(dataset = self.dataset, 
         #                                                 path_to_data = self.path_to_data,
@@ -110,7 +129,7 @@ class Trainer():
         # Loss hyperparameters 
         ################
         self.rec_weight = rec_weight
-        self.kld_weight = self.batch_size /(data_length//2) 
+        self.kld_weight = self.batch_size /(data_length[self.which_loader]//2) 
         self.X_kld_weight = X_kld_weight
         self.S_kld_weight = S_kld_weight
         self.inter_kld_weight = inter_kld_weight
@@ -148,6 +167,9 @@ class Trainer():
 
     
     def build_model(self):
+        self.bertmodel = AutoModel.from_pretrained("bert-base-uncased")
+        # this linear layer is to pool all the 10 future posts to a bert embedding with same size of query post
+        #self.linear_bert = torch.nn.Linear()
         self.zx_encoder = Exclusive_Specific_Encoder().to(self.device)
         self.zy_encoder = Exclusive_Specific_Encoder().to(self.device)
         
@@ -250,16 +272,47 @@ class Trainer():
 
         return total_loss , [recon_X_loss.item(), recon_Y_loss.item(), kl_X_loss.item(), kl_Y_loss.item(), kl_S_loss.item(), kl_interX_loss.item(), kl_interY_loss.item()]
 
+    # def Unpack_Data(self, data):
+    #     X_image = data["X"].detach().float().to(self.device)
+    #     Y_image = data["Y"].detach().float().to(self.device)
+    #     return X_image, Y_image
+    
     def Unpack_Data(self, data):
-        X_image = data["X"].detach().float().to(self.device)
-        Y_image = data["Y"].detach().float().to(self.device)
-        return X_image, Y_image
+        #X_image = data["X"].detach().float().to(self.device)
+        # print(type(data)) # tuple
+        # print(data[0][2].size()) # torch.Size([16, 58])
+        # print(data[1][0][1].size())  # torch.Size([16, 34])
+        # print(data[2].size()) # torch.Size([16, 20000])
+        # print(data[3].size()) # torch.Size([16, 20000])
+        # print(data[4].size())  # torch.Size([16])
+        batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels = data[0], data[1],data[2],data[3],data[4]
+        
+        query_batch_dict = {'input_ids': batch_query_bert_items[0], 'token_type_ids': batch_query_bert_items[1], 'attention_mask': batch_query_bert_items[2]}
+        query_bert_embedding = self.bertmodel(**query_batch_dict)[1] # (query_bert_embedding.size()): batch_size*768
+        
+        if len(batch_future_bert_items) == 10 and isinstance(batch_future_bert_items, list):
+            # now the batch is for the recon batch where 10 future posts are ready for bert and bow
+            all_future=torch.zeros_like(query_bert_embedding)
+            for each_future in batch_future_bert_items:
+                each_batch_dict = {'input_ids': each_future[0], 'token_type_ids': each_future[1], 'attention_mask': each_future[2]}
+                each_bert_embedding = self.bertmodel(**each_batch_dict)[1]
+                all_future += each_bert_embedding
+            ave_future_embedding = each_bert_embedding/10.0
+        else:
+            future_batch_dict = {'input_ids': batch_future_bert_items[0], 'token_type_ids': batch_future_bert_items[1], 'attention_mask': batch_future_bert_items[2]}
+            ave_future_embedding = self.bertmodel(**future_batch_dict)[1]
+        
+        return X_query_bows, Y_future_bows, query_bert_embedding, ave_future_embedding, cls_labels
+               
+        
+        
+      
     
     def train(self):
         
         data_iter = iter(self.data_loader)
         data_fixed = next(data_iter)
-        X_fixed , Y_fixed = self.Unpack_Data(data_fixed)
+        X_fixed , Y_fixed, query_bert, future_bert, cls_label = self.Unpack_Data(data_fixed)
 
         if self.resume_iters > 0:
             self.load_model(self.restored_model_path, self.resume_iters)
@@ -277,10 +330,10 @@ class Trainer():
         start_time = time.time()
         while self.global_iters <= self.max_iters:
             try:
-                input_X, input_Y = self.Unpack_Data(next(data_iter))
+                input_X, input_Y, query_bert, future_bert, cls_label = self.Unpack_Data(next(data_iter))
             except:
                 data_iter = iter(self.data_loader)
-                input_X, input_Y = self.Unpack_Data(next(data_iter))
+                input_X, input_Y, query_bert, future_bert, cls_label = self.Unpack_Data(next(data_iter))
 
             self.global_iters += 1
 
