@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 import string
-from transformers import AutoTokenizer, AutoModel
+from transformers import AutoTokenizer
 import nltk
 import string
 from torch.utils import data
@@ -21,7 +21,7 @@ class ReconScratchDataset(torch.utils.data.Dataset):
             self,
             data_file,
             dataset_mode,
-            bow_vocab_size,
+            vocab_size,
             vocab_list,
             ): 
 
@@ -31,7 +31,7 @@ class ReconScratchDataset(torch.utils.data.Dataset):
         
         self.vocab_list = vocab_list
         self.vocab_count_dict = {}
-        self.vocab_size = bow_vocab_size
+        self.vocab_size = vocab_size
 
         self.process_data_file()
     
@@ -77,7 +77,7 @@ class ReconScratchDataset(torch.utils.data.Dataset):
         return bow_feature
     
     def get_query_bow_features(self, twitter):
-        text+=twitter.lower()
+        text=twitter.lower()
         
         remove = str.maketrans('', '',string.punctuation)
         without_punctuation = text.translate(remove)
@@ -148,6 +148,7 @@ class ReconScratchDataset(torch.utils.data.Dataset):
             list1= sorted(self.vocab_count_dict.items(),key=lambda x:x[1], reverse=True)
             test1 = list(dict(list1).keys())
             # test2 = list(dict(list1).items())
+            print('The top 50 words in vocab_to_idx_dict: ')
             print(test1[0:50])
             # print(test2)
             for token in test1:
@@ -169,7 +170,7 @@ def recon_my_collate(batch):
     batch_query_bows = []
     batch_n_1_bows = []
     batch_labels = []
-    for idx in range(0,9):
+    for idx in range(0,10):
         batch_twi_sentences=[]
         for _, n_twitter_tokens, _, _, _ in batch:
             batch_twi_sentences.append(n_twitter_tokens[idx])  # totally number of batch_size(like 4, 128, ...) token_input_ids in batch_twi_sentences
@@ -200,7 +201,7 @@ class TimeScratchDataset(torch.utils.data.Dataset):
             self,
             data_file,
             dataset_mode,
-            bow_vocab_size,
+            vocab_size,
             vocab_list,
             ): 
 
@@ -210,7 +211,7 @@ class TimeScratchDataset(torch.utils.data.Dataset):
         
         self.vocab_list = vocab_list
         self.vocab_count_dict = {}
-        self.vocab_size = bow_vocab_size
+        self.vocab_size = vocab_size
 
         self.process_data_file()
     
@@ -265,7 +266,7 @@ class TimeScratchDataset(torch.utils.data.Dataset):
             l = line.strip('\n').split('\t')
             query, future, hashtag = str(l[1]).lower(), str(l[2]).lower(), int(l[0])
             twitter = [query, future]
-            if len(query) > 0 and len(future) > 0 and len(hashtag) > 0:
+            if len(query) > 0 and len(future) > 0 and len(str(hashtag)) > 0:
                 self.twitter_hashtag.append((twitter, hashtag))
 
         # formulate vocab_dict
@@ -292,6 +293,7 @@ class TimeScratchDataset(torch.utils.data.Dataset):
             list1= sorted(self.vocab_count_dict.items(),key=lambda x:x[1], reverse=True)
             test1 = list(dict(list1).keys())
             # test2 = list(dict(list1).items())
+            print('The top 50 words in vocab_to_idx_dict: ')
             print(test1[0:50])
             # print(test2)
             for token in test1:
@@ -338,11 +340,11 @@ def load_recon_dataloader(dataset, path_to_data, train, batch_size, bow_vocab_si
     data_length=dataset.__len__()
 
     dataloader = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=recon_my_collate, num_workers=8)
-    return dataloader, data_length, dataset.get_bow_vocab_list()
+    return dataloader, data_length, dataset.get_vocab_list()
 
 def load_time_dataloader(dataset, path_to_data, train, batch_size, bow_vocab_size, bow_vocab_list):
     dataset = TimeScratchDataset(data_file=path_to_data, dataset_mode=train, vocab_size=bow_vocab_size, vocab_list=bow_vocab_list)
     data_length=dataset.__len__()
 
     dataloader = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=time_my_collate, num_workers=8)
-    return dataloader, data_length, dataset.get_bow_vocab_list()
+    return dataloader, data_length, dataset.get_vocab_list()
