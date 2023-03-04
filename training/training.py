@@ -408,7 +408,7 @@ class Trainer():
             # print('*'*100)
             # print(query_bert)
             # print(zs)
-            zs=torch.zeros_like(zs)
+            # zs=torch.zeros_like(zs)
             mlp_input = torch.cat((query_bert, zs/10), dim=1)
             # mlp_input = mlp_input.to(self.device)
             
@@ -424,11 +424,11 @@ class Trainer():
                 print('train_total_loss: '+str(loss))
                 
             
-            if self.global_iters <= 300:
+            if self.global_iters <= 1000: #300:
                 fix_model( self.bertmodel)
                 fix_model(self.fc_mlp_ntm)
                 fix_model(self.mlp)
-            elif self.global_iters <= 600:
+            elif self.global_iters <= 2000: #600:
                 unfix_model( self.bertmodel)
                 unfix_model(self.fc_mlp_ntm)
                 unfix_model(self.mlp)
@@ -578,7 +578,7 @@ class Trainer():
                     test_recon_X = self.x_decoder(test_zx, test_zs)
                     test_recon_Y = self.y_decoder(test_zy, test_zs)
                     
-                    test_zs=torch.zeros_like(test_zs)
+                    # test_zs=torch.zeros_like(test_zs)
                     test_mlp_input = torch.cat((test_query_bert, test_zs/10), dim=1)
                     # mlp_input = mlp_input.to(self.device)
                     
