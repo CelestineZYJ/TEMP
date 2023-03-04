@@ -357,7 +357,7 @@ class Trainer():
         start_time = time.time()
         
         while self.global_iters <= self.max_iters:
-            if self.global_iters % 100 == 0 :
+            if self.global_iters % 50 == 0 :
                 print('\nself.max_iters: '+str(self.max_iters)+' / self.global_iters: '+str(self.global_iters)+' / '+str((self.global_iters+1)*100/float(self.max_iters))+'%')
             try:
                 batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label = self.Unpack_Data(next(data_iter))
@@ -417,39 +417,21 @@ class Trainer():
                                         zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
                                         zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, pred_cls_label, cls_label)
 
-            if self.global_iters % 100 == 0 :
+            if self.global_iters % 50 == 0 :
                 print('-'*10+'train: '+'-'*10)
                 
                 print('train_mlp_loss: '+str(mlp_loss))
                 print('train_total_loss: '+str(loss))
                 
-            # if self.global_iters <= 20:
-            #     fix_model( self.bertmodel)
-            #     fix_model(self.mlp)
-            # elif self.global_iters <= 50:
-            #     unfix_model( self.bertmodel)
-            #     unfix_model(self.mlp)
-            #     fix_model(self.zx_encoder)
-            #     fix_model(self.zy_encoder)
-            #     fix_model(self.FE)
-            #     fix_model(self.zx_s_encoder)
-            #     fix_model(self.zy_s_encoder)
-            #     fix_model(self.zs_encoder)
-            #     fix_model(self.x_decoder)
-            #     fix_model(self.y_decoder)
-            # else:
-            #     unfix_model(self.zx_encoder)
-            #     unfix_model(self.zy_encoder)
-            #     unfix_model(self.FE)
-            #     unfix_model(self.zx_s_encoder)
-            #     unfix_model(self.zy_s_encoder)
-            #     unfix_model(self.zs_encoder)
-            #     unfix_model(self.x_decoder)
-            #     unfix_model(self.y_decoder)
-                
-            if self.global_iters <= 1000:
-                # unfix_model(self.bertmodel)
-                # unfix_model(self.mlp)
+            
+            if self.global_iters <= 300:
+                fix_model( self.bertmodel)
+                fix_model(self.fc_mlp_ntm)
+                fix_model(self.mlp)
+            elif self.global_iters <= 600:
+                unfix_model( self.bertmodel)
+                unfix_model(self.fc_mlp_ntm)
+                unfix_model(self.mlp)
                 fix_model(self.zx_encoder)
                 fix_model(self.zy_encoder)
                 fix_model(self.FE)
@@ -485,7 +467,7 @@ class Trainer():
             
 
             ################################################--valid--########################################################################
-            if self.global_iters % 500 == 0 and self.global_iters >= 120:
+            if self.global_iters % 200 == 0 and self.global_iters >= 120:
                 valid_total_loss = 0
                 valid_mlp_loss = 0
                 valid_true_count = 0
@@ -555,7 +537,7 @@ class Trainer():
                 print('valid set accuracy: '+str(float(valid_true_count/valid_all_count)))
             
             ################################################--test--########################################################################
-            if self.global_iters % 100 == 0 and self.global_iters >= 40:
+            if self.global_iters % 50 == 0 and self.global_iters >= 40:
                 test_total_loss = 0
                 test_mlp_loss = 0
                 test_true_count = 0
