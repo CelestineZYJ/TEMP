@@ -283,7 +283,7 @@ class Trainer():
         kld_loss = torch.mean(-0.5 * torch.sum(1 + (log_var0 - log_var1) - ((mu0 - mu1) ** 2 + log_var0.exp()/log_var1.exp()), dim = 1), dim = 0)
         return self.kld_weight * kld_loss
 
-    def loss_function(self, recon_X, recon_Y, input_X, input_Y, zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, pred_cls_label, cls_label):
+    def loss_function_X(self, recon_X, recon_Y, input_X, input_Y, zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, pred_cls_label, cls_label):
 
         recon_X_loss = self.reconstruction_loss(recon_X, input_X, "L1")
         recon_Y_loss = self.reconstruction_loss(recon_Y, input_Y, "L1")
@@ -308,6 +308,34 @@ class Trainer():
         # total_loss = mlp_loss
 
         return total_loss , mlp_loss #[recon_X_loss.item(), recon_Y_loss.item(), kl_X_loss.item(), kl_Y_loss.item(), kl_S_loss.item(), kl_interX_loss.item(), kl_interY_loss.item(), mlp_loss.item()]
+
+    
+    def loss_function_Y(self, recon_X, recon_Y, input_X, input_Y, zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, pred_cls_label, cls_label):
+
+        recon_X_loss = self.reconstruction_loss(recon_X, input_X, "L1")
+        recon_Y_loss = self.reconstruction_loss(recon_Y, input_Y, "L1")
+
+        
+
+        kl_X_loss = self.KLD_loss(zx_mu, zx_log_var, self.normal_mu, self.normal_log_var)
+        kl_Y_loss = self.KLD_loss(zy_mu, zy_log_var, self.normal_mu, self.normal_log_var)
+        kl_S_loss = self.KLD_loss(zs_mu, zs_log_var, self.normal_mu, self.normal_log_var)
+        kl_interX_loss = self.KLD_loss(zs_mu, zs_log_var, zx_s_mu, zx_s_log_var)
+        kl_interY_loss = self.KLD_loss(zs_mu, zs_log_var, zy_s_mu, zy_s_log_var)
+
+        reg_coeff = (1.0 - ((-1)*torch.tensor(self.global_iters, dtype = torch.float32)/25000.0).exp()).to(self.device)
+
+        mlp_loss = self.cls_loss(pred_cls_label, cls_label)*100
+        
+        total_loss = (self.rec_weight * (recon_X_loss + recon_Y_loss) \
+                    + reg_coeff * self.X_kld_weight * (kl_X_loss + kl_Y_loss) \
+                    + reg_coeff * self.S_kld_weight * (kl_S_loss) \
+                    + self.inter_kld_weight * (kl_interX_loss + kl_interY_loss)) + mlp_loss
+        
+        # total_loss = mlp_loss
+
+        return total_loss , mlp_loss #[recon_X_loss.item(), recon_Y_loss.item(), kl_X_loss.item(), kl_Y_loss.item(), kl_S_loss.item(), kl_interX_loss.item(), kl_interY_loss.item(), mlp_loss.item()]
+
 
     # def Unpack_Data(self, data):
     #     X_image = data["X"].detach().float().to(self.device)
@@ -410,15 +438,31 @@ class Trainer():
             
             
             pred_cls_label = self.mlp(self.fc_mlp_ntm(mlp_input))
-            loss, mlp_loss = self.loss_function(recon_X, recon_Y, input_X, input_Y, 
+            loss, mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
                                         zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
                                         zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, pred_cls_label, cls_label)
-
+            
+            zero_zx_s = torch.zeros_like(zx_s)
+            pseudo_future_mlp_input = torch.cat((future_bert, zero_zx_s), dim=1)
+            # pseudo_future_mlp_input = torch.cat((future_bert, zx_s), dim=1)
+            pseudo_future_cls_label = self.mlp(self.fc_mlp_ntm(pseudo_future_mlp_input)).argmax(dim=1)
+            
+            pred_future_mlp_input = torch.cat((future_bert, zy_s), dim=1)
+            pred_future_cls_label = self.mlp(self.fc_mlp_ntm(pred_future_mlp_input))
+            loss_Y, mlp_loss_Y = self.loss_function_Y(recon_X, recon_Y, input_X, input_Y, 
+                                        zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                        zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, pred_future_cls_label, pseudo_future_cls_label)
+            # print('*'*200)
+            # print(pseudo_future_cls_label)
+            # print(pred_future_cls_label)
+            
             if self.global_iters % 50 == 0 :
                 print('-'*10+'train: '+'-'*10)
                 
                 print('train_mlp_loss: '+str(mlp_loss))
                 print('train_total_loss: '+str(loss))
+                print('train_mlp_loss_Y: '+str(mlp_loss_Y))
+                print('train_total_loss: '+str(loss_Y))
                 
             
             if self.global_iters <= 2000: #300:
@@ -427,7 +471,6 @@ class Trainer():
                 fix_model(self.mlp)
                 
                 loss.backward()
-                
                 self.optimizer_exc_enc.step()
                 self.optimizer_shr_enc.step()
                 self.optimizer_dec.step()
@@ -435,7 +478,7 @@ class Trainer():
                 self.scheduler_exc_enc.step()
                 self.scheduler_shr_enc.step()
                 self.scheduler_dec.step()
-            elif self.global_iters <= 4000: #600:
+            elif self.global_iters <= 3500: #600:
                 unfix_model( self.bertmodel)
                 unfix_model(self.fc_mlp_ntm)
                 unfix_model(self.mlp)
@@ -450,9 +493,30 @@ class Trainer():
                 
                 loss.backward()
                 self.optimizer_mlp.step()
-
                 self.scheduler_mlp.step()
+                
+            elif self.global_iters <= 50000:
+                fix_model( self.bertmodel)
+                fix_model(self.fc_mlp_ntm)
+                fix_model(self.mlp)
+                unfix_model(self.zy_encoder)
+                unfix_model(self.zx_s_encoder)
+                unfix_model(self.zy_s_encoder)
+                unfix_model(self.y_decoder)
+                
+                loss_Y.backward()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+
             else:
+                unfix_model( self.bertmodel)
+                unfix_model(self.fc_mlp_ntm)
+                unfix_model(self.mlp)
                 unfix_model(self.zx_encoder)
                 unfix_model(self.zy_encoder)
                 unfix_model(self.FE)
@@ -532,6 +596,7 @@ class Trainer():
                     valid_recon_Y = self.y_decoder(valid_zy, valid_zs)
                     
                     # valid_mlp_input = torch.cat((valid_query_bert, valid_zs/10), dim=1)
+                    # valid -> zeros_like
                     valid_mlp_input = torch.cat((valid_query_bert, valid_zx_s), dim=1)
                    
                     
@@ -560,7 +625,7 @@ class Trainer():
                 print('valid set accuracy: '+str(float(valid_true_count/valid_all_count)))
             
             ################################################--test--########################################################################
-            if self.global_iters % 50 == 0 and self.global_iters >= 1000:
+            if self.global_iters % 50 == 0 and self.global_iters >= 1500:
                 test_total_loss = 0
                 test_mlp_loss = 0
                 test_true_count = 0
@@ -606,6 +671,7 @@ class Trainer():
                     # print('*'*100)
                     # print(test_query_bert)
                     # print(test_zx_s)
+                    test_zx_s = torch.zeros_like(test_zx_s)
                     test_mlp_input = torch.cat((test_query_bert, test_zx_s), dim=1)
                     # test_mlp_input = torch.cat((test_temp, test_zs/10), dim=1)
                     
@@ -689,6 +755,8 @@ class Trainer():
                     #                         test_zx_log_var, test_zy_log_var, test_zx_s_log_var, test_zy_s_log_var, test_zs_log_var, test_pred_cls_label, test_cls_label)
                     # test_total_loss += each_batch_test_loss
                     # test_mlp_loss += each_batch_mlp_loss
+                    
+                    
                     
                     test_pred_max_labels = test_pred_cls_label.argmax(dim=1)
 
