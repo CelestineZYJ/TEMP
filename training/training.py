@@ -32,7 +32,7 @@ def unfix_model(model):
         
 class Trainer():
 
-    def __init__(self, device, train, which_loader, directory, dataset, path_to_data, batch_size, bow_vocab_size, max_iters, resume_iters, restored_model_path, lr, weight_decay, beta1, beta2, milestones, scheduler_gamma, rec_weight, X_kld_weight, S_kld_weight, inter_kld_weight, print_freq, sample_freq, model_save_freq, test_iters, test_path):
+    def __init__(self, device, train, which_loader, directory, dataset, path_to_data, batch_size, bow_vocab_size, max_iters, resume_iters, restored_model_path, lr, mlp_lr, weight_decay, beta1, beta2, milestones, scheduler_gamma, rec_weight, X_kld_weight, S_kld_weight, inter_kld_weight, print_freq, sample_freq, model_save_freq, test_iters, test_path):
 
         self.device = device
         self.train_bool = train
@@ -135,6 +135,7 @@ class Trainer():
         # Optimizer, Scheduler setting
         ###############
         self.lr = lr
+        self.mlp_lr=mlp_lr
         self.weight_decay = weight_decay
         self.beta1 = beta1
         self.beta2 = beta2
@@ -201,7 +202,7 @@ class Trainer():
         self.x_decoder = Decoder().to(self.device)
         self.y_decoder = Decoder().to(self.device)
         
-        self.optimizer_mlp = torch.optim.Adam(itertools.chain(self.bertmodel.parameters(), self.fc_mlp_ntm.parameters(), self.mlp.parameters()), lr = self.lr, betas = (self.beta1, self.beta2), weight_decay = self.weight_decay)
+        self.optimizer_mlp = torch.optim.Adam(itertools.chain(self.bertmodel.parameters(), self.fc_mlp_ntm.parameters(), self.mlp.parameters()), lr = self.mlp_lr, betas = (self.beta1, self.beta2), weight_decay = self.weight_decay)
         self.optimizer_exc_enc= torch.optim.Adam(itertools.chain(self.zx_encoder.parameters(), self.zy_encoder.parameters()), lr = self.lr, betas = (self.beta1, self.beta2), weight_decay = self.weight_decay)
         self.optimizer_shr_enc= torch.optim.Adam(itertools.chain(self.FE.parameters(), self.zs_encoder.parameters(),self.zx_s_encoder.parameters(), self.zy_s_encoder.parameters()), 
                                                 lr = self.lr, betas = (self.beta1, self.beta2), weight_decay = self.weight_decay)
@@ -299,12 +300,12 @@ class Trainer():
 
         mlp_loss = self.cls_loss(pred_cls_label, cls_label)*100
         
-        # total_loss = (self.rec_weight * (recon_X_loss + recon_Y_loss) \
-        #             + reg_coeff * self.X_kld_weight * (kl_X_loss + kl_Y_loss) \
-        #             + reg_coeff * self.S_kld_weight * (kl_S_loss) \
-        #             + self.inter_kld_weight * (kl_interX_loss + kl_interY_loss))/10 + mlp_loss
+        total_loss = (self.rec_weight * (recon_X_loss + recon_Y_loss) \
+                    + reg_coeff * self.X_kld_weight * (kl_X_loss + kl_Y_loss) \
+                    + reg_coeff * self.S_kld_weight * (kl_S_loss) \
+                    + self.inter_kld_weight * (kl_interX_loss + kl_interY_loss))/2 + mlp_loss
         
-        total_loss = mlp_loss
+        # total_loss = mlp_loss
 
         return total_loss , mlp_loss #[recon_X_loss.item(), recon_Y_loss.item(), kl_X_loss.item(), kl_Y_loss.item(), kl_S_loss.item(), kl_interX_loss.item(), kl_interY_loss.item(), mlp_loss.item()]
 
@@ -405,12 +406,9 @@ class Trainer():
             recon_X = self.x_decoder(zx, zs)
             recon_Y = self.y_decoder(zy, zs)
             
-            # print('*'*100)
-            # print(query_bert)
-            # print(zs)
-            # zs=torch.zeros_like(zs)
+            
             mlp_input = torch.cat((query_bert, zs/10), dim=1)
-            # mlp_input = mlp_input.to(self.device)
+            
             
             pred_cls_label = self.mlp(self.fc_mlp_ntm(mlp_input))
             loss, mlp_loss = self.loss_function(recon_X, recon_Y, input_X, input_Y, 
@@ -424,11 +422,21 @@ class Trainer():
                 print('train_total_loss: '+str(loss))
                 
             
-            if self.global_iters <= 1000: #300:
+            if self.global_iters <= 200: #300:
                 fix_model( self.bertmodel)
                 fix_model(self.fc_mlp_ntm)
                 fix_model(self.mlp)
-            elif self.global_iters <= 2000: #600:
+                
+                loss.backward()
+                
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+            elif self.global_iters <= 1600: #600:
                 unfix_model( self.bertmodel)
                 unfix_model(self.fc_mlp_ntm)
                 unfix_model(self.mlp)
@@ -440,6 +448,11 @@ class Trainer():
                 fix_model(self.zs_encoder)
                 fix_model(self.x_decoder)
                 fix_model(self.y_decoder)
+                
+                loss.backward()
+                self.optimizer_mlp.step()
+
+                self.scheduler_mlp.step()
             else:
                 unfix_model(self.zx_encoder)
                 unfix_model(self.zy_encoder)
@@ -449,25 +462,36 @@ class Trainer():
                 unfix_model(self.zs_encoder)
                 unfix_model(self.x_decoder)
                 unfix_model(self.y_decoder)
+                
+                loss.backward()
+                self.optimizer_mlp.step()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
 
 
-            loss.backward()
-            self.optimizer_mlp.step()
-            self.optimizer_exc_enc.step()
-            self.optimizer_shr_enc.step()
-            self.optimizer_dec.step()
+            # loss.backward()
+            # self.optimizer_mlp.step()
+            # self.optimizer_exc_enc.step()
+            # self.optimizer_shr_enc.step()
+            # self.optimizer_dec.step()
 
-            self.scheduler_mlp.step()
-            self.scheduler_exc_enc.step()
-            self.scheduler_shr_enc.step()
-            self.scheduler_dec.step()
+            # self.scheduler_mlp.step()
+            # self.scheduler_exc_enc.step()
+            # self.scheduler_shr_enc.step()
+            # self.scheduler_dec.step()
             
         # if self.max_iters / self.global_iters == 10:
         #     print(str(self.which_loader)+' loss: '+str(loss))
             
 
             ################################################--valid--########################################################################
-            if self.global_iters % 200 == 0 and self.global_iters >= 120:
+            if self.global_iters % 200 == 0:
                 valid_total_loss = 0
                 valid_mlp_loss = 0
                 valid_true_count = 0
@@ -496,7 +520,6 @@ class Trainer():
                     valid_query_bert = valid_query_bert.to(self.device)
                     valid_future_bert = valid_future_bert.to(self.device)
                     
-
 
                     valid_zx_mu, valid_zx_log_var, valid_zx = self.zx_encoder(valid_input_X)
                     valid_zy_mu, valid_zy_log_var, valid_zy = self.zy_encoder(valid_input_Y)
@@ -537,7 +560,7 @@ class Trainer():
                 print('valid set accuracy: '+str(float(valid_true_count/valid_all_count)))
             
             ################################################--test--########################################################################
-            if self.global_iters % 50 == 0 and self.global_iters >= 40:
+            if self.global_iters % 50 == 0:
                 test_total_loss = 0
                 test_mlp_loss = 0
                 test_true_count = 0
