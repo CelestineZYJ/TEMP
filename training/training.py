@@ -477,8 +477,8 @@ class Trainer():
                 self.optimizer_shr_enc.step()
                 self.optimizer_dec.step()
 
-                # self.optimizer_mlp.step()
-                # self.scheduler_mlp.step()
+                self.optimizer_mlp.step()
+                self.scheduler_mlp.step()
                 
                 self.scheduler_exc_enc.step()
                 self.scheduler_shr_enc.step()
@@ -497,16 +497,12 @@ class Trainer():
                 fix_model(self.y_decoder)
                 
                 loss.backward()
-                # self.optimizer_exc_enc.step()
-                # self.optimizer_shr_enc.step()
-                # self.optimizer_dec.step()
-
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+                
                 self.optimizer_mlp.step()
                 self.scheduler_mlp.step()
-                
-                # self.scheduler_exc_enc.step()
-                # self.scheduler_shr_enc.step()
-                # self.scheduler_dec.step()
                 
             else:
                 unfix_model( self.bertmodel)
