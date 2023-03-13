@@ -372,8 +372,9 @@ def cla_twis():
     #########################################################################################################################################
     model.load_state_dict(torch.load('/mnt/zyj/irTemp/retrieve/stance/'+f'model_{MODELID}.pt')) # 190!! 210!!450!!
     #########################################################################################################################################
-
+    
     # re-ranking
+    '''
     query_features = []
     pool_features = []
     with torch.no_grad():
@@ -390,7 +391,7 @@ def cla_twis():
         query_sen = OrderedDict()
         idx = 0 
         print(len(query_lines))
-        print(len(test_data_loader))
+        print(len(query_data_loader))
         
         for batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels, _ in tqdm(query_data_loader, desc='test for the model:'):
 
@@ -414,10 +415,10 @@ def cla_twis():
                 idx += 1
                 
  
-    print(len(query_features))
-    json_str = json.dumps(query_sen)
-    with open(config["path_to_data"]["query_feature_dict"], 'w') as json_file:
-        json_file.write(json_str)
+        print(len(query_features))
+        json_str = json.dumps(query_sen)
+        with open(config["path_to_data"]["query_feature_dict"], 'w') as json_file:
+            json_file.write(json_str)
     
             
     with torch.no_grad():
@@ -462,14 +463,14 @@ def cla_twis():
         json_str = json.dumps(pool_sen)
         with open(config["path_to_data"]["pool_feature_dict"], 'w') as json_file:
             json_file.write(json_str)
+    '''
     
     
     
-    
-    with open(config["path_to_data"]["query_feature_dict"], 'r') as query_f:
+    with open(config["path_to_data"]["query_feature_dict"], 'r', encoding='utf-8') as query_f:
         query_sen = json.load(query_f)
         
-    with open(config["path_to_data"]["pool_feature_dict"], 'r') as query_f:
+    with open(config["path_to_data"]["pool_feature_dict"], 'r') as pool_f:
         pool_sen = json.load(pool_f)
         
         
@@ -482,28 +483,47 @@ def cla_twis():
     query_pool_rank = OrderedDict()
     each_query_pool_rank = {}
         
-
+    
+    
     for line in tqdm(query_lines):
         line = line.strip('\n').split('\t')
         label, sen = line[0], line[2]
-        query_sen = label+'\t'+sen
+        query_sentence = label+'\t'+sen
         
-        for idx, pool_line in enumerate(pool_lines):
-            line = pool_lines[idx].strip('\n').split('\t')
-            answer_sen = line[2]
-            each_query_dot = np.dot(np.array(query_features[query_sen]), np.array(pool_features[answer_sen]))
-            each_query_pool_rank[answer_sen] = each_query_dot
+        for pool_line in (pool_lines):
+            line = pool_line.strip('\n').split('\t')
+            answer_sentence = line[2]
+            each_query_dot = np.dot(np.array(query_sen[query_sentence]), np.array(pool_sen[answer_sentence]))
+            each_query_pool_rank[answer_sentence] = each_query_dot
             
         # re-rank all the answers for each query by dot product value
-        sort_each_query_pool_rank = sorted(each_query_pool_rank.items, reverse=True, key=lambda item:item[1])
-        top_rank_30 = list(sort_each_query_pool_rank)[:30]
-        query_pool_rank[query_sen] = top_rank_30
-        print(top_rank_30)
+        sort_each_query_pool_rank = sorted(each_query_pool_rank.items(), reverse=True, key=lambda item:item[1])
         
-    print(list(query_pool_rank)[:10])
+        query_pool_rank[query_sentence] = sort_each_query_pool_rank[:30]
+    
+    # print(query_pool_rank)
+    
+    json_str = json.dumps(query_pool_rank)
+    with open(config["path_to_data"]["rerank_30"], 'w') as json_file:
+        json_file.write(json_str)
+    
+    
+    
         
-        
-        
-        
+    with open(config["path_to_data"]["rerank_30"], 'r', encoding='utf-8') as json_file:
+        query_pool_rank = json.load(json_file)
+    
+    
+    
+    query_f = open(config["path_to_data"]['query_test'], 'r')
+    query_lines = query_f.readlines()[:2]
+    
+    for line in tqdm(query_lines):
+        line = line.strip('\n').split('\t')
+        label, sen = line[0], line[2]
+        query_sentence = label+'\t'+sen
+        top10s = query_pool_rank[query_sentence]
+        print(top10s[0])
+            
             
 cla_twis()
