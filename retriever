@@ -10,12 +10,15 @@ import random
 from utils.loss import vae_loss_function
 from utils.loss import l1_penalty
 from models.dynamicVAE import DVAE
+from models.retrieve_mlp import MLP
 from dataloader.dataloader import load_recon_dataloader
 from dataloader.dataloader import load_time_dataloader
 import torch.nn.functional as F
+from collections import OrderedDict
 
 
-device = torch.device("cuda:3")
+
+device = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 
 
 # Get config file from command line arguments
@@ -66,13 +69,27 @@ def cla_twis():
                                                     bow_vocab_size = config["bow_vocab_size"],
                                                     bow_vocab_list=train_bow_vocab_list
                                                     )
+    pool_data_loader, _, _ = load_time_dataloader(dataset = config["dataset"], 
+                                                    path_to_data = config["path_to_data"]['pool_test'],
+                                                    train = False,
+                                                    batch_size= config["training"]["batch_size"],
+                                                    bow_vocab_size = config["bow_vocab_size"],
+                                                    bow_vocab_list=train_bow_vocab_list
+                                                    )
+    query_data_loader, _, _ = load_time_dataloader(dataset = config["dataset"], 
+                                                    path_to_data = config["path_to_data"]['query_test'],
+                                                    train = False,
+                                                    batch_size= config["training"]["batch_size"],
+                                                    bow_vocab_size = config["bow_vocab_size"],
+                                                    bow_vocab_list=train_bow_vocab_list
+                                                    )
     
     
     #model, criterion, optimizer
     ntm_model = DVAE()
     model = MLP(ntm_model)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.00001) 
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.000005) 
     # scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(optimizer, factor=0.9, patience=50, threshold=1e-4, min_lr=1e-4)
 
    
@@ -81,6 +98,7 @@ def cla_twis():
     
     # 5, 40
     epochs = [5, 20]  # 100, 35 ok lr=0.0005, 60, 35, lr=0.001 ok
+    epochs=[0,0]
     #train the model
     epoch = epochs[0]
 
@@ -104,7 +122,7 @@ def cla_twis():
             optimizer.zero_grad()
 
             # forward process-------------------------------------
-            pred_labels, recon_batch, X_bow_feature, mu, logvar = model(query_batch_dict, X_query_bows)
+            pred_labels, recon_batch, X_bow_feature, mu, logvar, _ = model(query_batch_dict, X_query_bows)
 
 
             # compute loss
@@ -115,7 +133,7 @@ def cla_twis():
 
             Y_bow_feature = F.normalize(Y_future_bows)
             vae_loss = vae_loss_function(recon_batch, Y_bow_feature, mu, logvar)
-            vae_loss = vae_loss + model.get_vae_model().l1_strength * l1_penalty(model.get_vae_model().fcd1.weight)
+            vae_loss = vae_loss + model.get_vae_model().l1_strength.to(device) * l1_penalty(model.get_vae_model().fcd1.weight)
 
             # print('@'*100)
             # print(mlp_loss)
@@ -136,7 +154,7 @@ def cla_twis():
         #########################################################################################################
         model.eval()
         total_loss = 0.
-        for batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels in tqdm(valid_data_loader, desc='valid for the '+str(epoch)+' epoch:'):
+        for batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels, _ in tqdm(valid_data_loader, desc='valid for the '+str(epoch)+' epoch:'):
             
             X_query_bows=X_query_bows.detach().float().to(device)
             Y_future_bows=Y_future_bows.detach().float().to(device)
@@ -150,7 +168,7 @@ def cla_twis():
             optimizer.zero_grad()
 
             # forward process-------------------------------------
-            pred_labels, recon_batch, X_bow_feature, mu, logvar  = model(query_batch_dict, X_query_bows)
+            pred_labels, recon_batch, X_bow_feature, mu, logvar, _  = model(query_batch_dict, X_query_bows)
 
             # compute loss
            
@@ -160,7 +178,7 @@ def cla_twis():
 
             Y_bow_feature = F.normalize(Y_future_bows)
             vae_loss = vae_loss_function(recon_batch, Y_bow_feature, mu, logvar)
-            vae_loss = vae_loss + model.get_vae_model().l1_strength * l1_penalty(model.get_vae_model().fcd1.weight)
+            vae_loss = vae_loss + model.get_vae_model().l1_strength.to(device) * l1_penalty(model.get_vae_model().fcd1.weight)
 
             # print('@'*100)
             # print(mlp_loss)
@@ -176,7 +194,7 @@ def cla_twis():
 
     #####################################################################################
     # joint train vae and mlp
-    optimizer = torch.optim.Adam(model.parameters(), lr=0.000001) 
+    optimizer = torch.optim.Adam(model.parameters(), lr=0.000005) 
     epoch = epochs[1]
     #unfix_model(model.get_vae_model())
     unfix_model(model)
@@ -197,7 +215,7 @@ def cla_twis():
             optimizer.zero_grad()
 
             # forward process-------------------------------------
-            pred_labels, recon_batch, X_bow_feature, mu, logvar = model(query_batch_dict, X_query_bows)
+            pred_labels, recon_batch, X_bow_feature, mu, logvar, _ = model(query_batch_dict, X_query_bows)
 
 
             # compute loss
@@ -208,7 +226,7 @@ def cla_twis():
 
             Y_bow_feature = F.normalize(Y_future_bows)
             vae_loss = vae_loss_function(recon_batch, Y_bow_feature, mu, logvar)
-            vae_loss = vae_loss + model.get_vae_model().l1_strength * l1_penalty(model.get_vae_model().fcd1.weight)
+            vae_loss = vae_loss + model.get_vae_model().l1_strength.to(device) * l1_penalty(model.get_vae_model().fcd1.weight)
 
             # print('@'*100)
             # print(mlp_loss)
@@ -228,7 +246,7 @@ def cla_twis():
         #########################################################################################################
         model.eval()
         total_loss = 0.
-        for batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels in tqdm(valid_data_loader, desc='valid for the '+str(epoch)+' epoch:'):
+        for batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels, _ in tqdm(valid_data_loader, desc='valid for the '+str(epoch)+' epoch:'):
             
             X_query_bows=X_query_bows.detach().float().to(device)
             Y_future_bows=Y_future_bows.detach().float().to(device)
@@ -242,7 +260,7 @@ def cla_twis():
             optimizer.zero_grad()
 
             # forward process-------------------------------------
-            pred_labels, recon_batch, bow_feature, mu, logvar  = model(query_batch_dict, X_query_bows)
+            pred_labels, recon_batch, bow_feature, mu, logvar, _  = model(query_batch_dict, X_query_bows)
 
             # compute loss
            
@@ -252,7 +270,7 @@ def cla_twis():
 
             Y_bow_feature = F.normalize(Y_future_bows)
             vae_loss = vae_loss_function(recon_batch, Y_bow_feature, mu, logvar)
-            vae_loss = vae_loss + model.get_vae_model().l1_strength * l1_penalty(model.get_vae_model().fcd1.weight)
+            vae_loss = vae_loss + model.get_vae_model().l1_strength.to(device) * l1_penalty(model.get_vae_model().fcd1.weight)
 
             # print('@'*100)
             # print(mlp_loss)
@@ -283,23 +301,23 @@ def cla_twis():
 
             
 
-            for test_input_ids, test_token_type_ids, test_attention_mask, test_hashtag_labels, test_bow_features in tqdm(test_data_loader, desc='test for the model:'):
+            for batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels, _ in tqdm(test_data_loader, desc='test for the model:'):
 
-                if torch.cuda.is_available():
-                    test_input_ids = test_input_ids.to(device)
-                    test_token_type_ids = test_token_type_ids.to(device)
-                    test_attention_mask = test_attention_mask.to(device)
-                    test_hashtag_labels = test_hashtag_labels.to(device)
-                    test_bow_features = test_bow_features.to(device)
-                    
+                X_query_bows=X_query_bows.detach().float().to(device)
+                Y_future_bows=Y_future_bows.detach().float().to(device)
+                
+                cls_labels=cls_labels.to(device)
+                
+                query_batch_dict = {'input_ids': batch_query_bert_items[0].to(device), 'token_type_ids': batch_query_bert_items[1].to(device), 'attention_mask': batch_query_bert_items[2].to(device)}
 
-                pred_labels, recon_batch, X_bow_feature, mu, logvar  = model(query_batch_dict, X_query_bows)
+
+                pred_labels, recon_batch, X_bow_feature, mu, logvar, _  = model(query_batch_dict, X_query_bows)
                 
                 
                 # print('*'*100)
                 pred_max_labels = pred_labels.argmax(dim=1)
 
-                true = test_hashtag_labels.cpu().numpy()
+                true = cls_labels.cpu().numpy()
                 pred = pred_max_labels.cpu().numpy()
 
                 true_list = true.tolist()
@@ -350,14 +368,14 @@ def cla_twis():
     # test the model
     if epoch != 0:
         MODELID = best_epoch
-
+    MODELID=1
     #########################################################################################################################################
     model.load_state_dict(torch.load('/mnt/zyj/irTemp/retrieve/stance/'+f'model_{MODELID}.pt')) # 190!! 210!!450!!
     #########################################################################################################################################
 
-
-
-
+    # re-ranking
+    query_features = []
+    pool_features = []
     with torch.no_grad():
         true_count = 0
         all_count = 0
@@ -367,72 +385,125 @@ def cla_twis():
         label1 = 0
         acclabel1 = 0
 
+        query_f = open(config["path_to_data"]['query_test'], 'r')
+        query_lines = query_f.readlines()
+        query_sen = OrderedDict()
+        idx = 0 
+        print(len(query_lines))
+        print(len(test_data_loader))
+        
+        for batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels, _ in tqdm(query_data_loader, desc='test for the model:'):
+
+            X_query_bows=X_query_bows.detach().float().to(device)
+            Y_future_bows=Y_future_bows.detach().float().to(device)
+            
+            cls_labels=cls_labels.to(device)
+            
+            query_batch_dict = {'input_ids': batch_query_bert_items[0].to(device), 'token_type_ids': batch_query_bert_items[1].to(device), 'attention_mask': batch_query_bert_items[2].to(device)}
+
+
+            pred_labels, recon_batch, X_bow_feature, mu, logvar, dynamic_topic_dense_feature  = model(query_batch_dict, X_query_bows)
+            
+            dynamic_topic_dense_feature = dynamic_topic_dense_feature.cpu().numpy().tolist()
+            
+            for num in dynamic_topic_dense_feature:
+                query_features.append(num)
+                line = query_lines[idx].strip('\n').split('\t')
+                label, sen = line[0], line[2]
+                query_sen[label+'\t'+sen] = num
+                idx += 1
+                
+ 
+    print(len(query_features))
+    json_str = json.dumps(query_sen)
+    with open(config["path_to_data"]["query_feature_dict"], 'w') as json_file:
+        json_file.write(json_str)
+    
+            
+    with torch.no_grad():
+        true_count = 0
+        all_count = 0
+
+        label0 = 0
+        acclabel0 = 0
+        label1 = 0
+        acclabel1 = 0
+
+        pool_f = open(config["path_to_data"]['pool_test'], 'r')
+        pool_lines = pool_f.readlines()
+        pool_sen = OrderedDict()
+        idx = 0 
+        print(len(pool_lines))
+        print(len(pool_data_loader))
+        
+        for batch_query_bert_items, batch_future_bert_items, X_query_bows, Y_future_bows, cls_labels, _ in tqdm(pool_data_loader, desc='test for the model:'):
+
+            X_query_bows=X_query_bows.detach().float().to(device)
+            Y_future_bows=Y_future_bows.detach().float().to(device)
+            
+            cls_labels=cls_labels.to(device)
+            
+            query_batch_dict = {'input_ids': batch_query_bert_items[0].to(device), 'token_type_ids': batch_query_bert_items[1].to(device), 'attention_mask': batch_query_bert_items[2].to(device)}
+
+
+            pred_labels, recon_batch, X_bow_feature, mu, logvar, dynamic_topic_dense_feature  = model(query_batch_dict, X_query_bows)
+            
+            dynamic_topic_dense_feature = dynamic_topic_dense_feature.cpu().numpy().tolist()
+            
+            for num in dynamic_topic_dense_feature:
+                pool_features.append(num)
+                line = pool_lines[idx].strip('\n').split('\t')
+                label, sen = line[0], line[2]
+                pool_sen[sen] = num
+                idx += 1
+                
+        
+        print(len(pool_features))
+        json_str = json.dumps(pool_sen)
+        with open(config["path_to_data"]["pool_feature_dict"], 'w') as json_file:
+            json_file.write(json_str)
+    
+    
+    
+    
+    with open(config["path_to_data"]["query_feature_dict"], 'r') as query_f:
+        query_sen = json.load(query_f)
+        
+    with open(config["path_to_data"]["pool_feature_dict"], 'r') as query_f:
+        pool_sen = json.load(pool_f)
+        
+        
+    query_f = open(config["path_to_data"]['query_test'], 'r')
+    query_lines = query_f.readlines()
+    
+    pool_f = open(config["path_to_data"]['pool_test'], 'r')
+    pool_lines = pool_f.readlines()
+    
+    query_pool_rank = OrderedDict()
+    each_query_pool_rank = {}
         
 
-        for test_input_ids, test_token_type_ids, test_attention_mask, test_hashtag_labels, test_bow_features in tqdm(test_data_loader, desc='test for the model:'):
-
-            if torch.cuda.is_available():
-                test_input_ids = test_input_ids.to(device)
-                test_token_type_ids = test_token_type_ids.to(device)
-                test_attention_mask = test_attention_mask.to(device)
-                test_hashtag_labels = test_hashtag_labels.to(device)
-                test_bow_features = test_bow_features.to(device)
-                
-
-            pred_labels, recon_batch, X_bow_feature, mu, logvar  = model(query_batch_dict, X_query_bows)
+    for line in tqdm(query_lines):
+        line = line.strip('\n').split('\t')
+        label, sen = line[0], line[2]
+        query_sen = label+'\t'+sen
+        
+        for idx, pool_line in enumerate(pool_lines):
+            line = pool_lines[idx].strip('\n').split('\t')
+            answer_sen = line[2]
+            each_query_dot = np.dot(np.array(query_features[query_sen]), np.array(pool_features[answer_sen]))
+            each_query_pool_rank[answer_sen] = each_query_dot
             
+        # re-rank all the answers for each query by dot product value
+        sort_each_query_pool_rank = sorted(each_query_pool_rank.items, reverse=True, key=lambda item:item[1])
+        top_rank_30 = list(sort_each_query_pool_rank)[:30]
+        query_pool_rank[query_sen] = top_rank_30
+        print(top_rank_30)
+        
+    print(list(query_pool_rank)[:10])
+        
+        
+        
+        
             
-            # print('*'*100)
-            pred_max_labels = pred_labels.argmax(dim=1)
-
-            true = test_hashtag_labels.cpu().numpy()
-            pred = pred_max_labels.cpu().numpy()
-
-            true_list = true.tolist()
-            pred_list = pred.tolist()
-
-            acc = (true - pred).tolist()
-
-            ###################################################################################################################
-            true_list = true.tolist()
-            pred_list = pred.tolist()
-
-
-            for idx, label in enumerate(true_list):
-                if label == 0:
-                    label0 += 1
-                    if pred_list[idx] == 0:
-                        acclabel0 += 1
-                elif label == 1:
-                    label1 += 1
-                    if pred_list[idx] == 1:
-                        acclabel1 += 1
-
-
-            ###################################################################################################################
-
-            # print(acc)
-            
-            for i in acc:
-                all_count += 1
-                if i == 0:
-                    true_count += 1
-            # except:
-            #     pass
-
-        print('label 0: '+str(label0))
-        print('acc label 0: '+str(float(acclabel0/label0)))
-
-        print('label 1: '+str(label1))
-        print('acc label 1: '+str(float(acclabel1/label1)))
-
-
-
-        print('true count: '+str(true_count))
-        print('all count: '+str(all_count))
-        print(float(true_count/all_count))
-        # print(len(y_test))
-        # print(len(y_predict))
-        # print(classification_report(y_test, y_predict))
-
 cla_twis()
