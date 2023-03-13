@@ -186,11 +186,11 @@ def recon_my_collate(batch):
     # get the tensor feature of each batch item
     batch_n_1_bert_items=[]
     for batch_twi_sentences in batch_n_1_sentences: # totally 10 twis
-        twi_batch_dict=tokenizer(batch_twi_sentences, is_split_into_words=True, truncation=True, padding=True, return_tensors='pt')
+        twi_batch_dict=tokenizer(batch_twi_sentences, is_split_into_words=True, truncation=True, padding=True, return_tensors='pt', max_length=128)
         twi_input_ids, twi_token_type_ids, twi_attention_mask = twi_batch_dict['input_ids'], twi_batch_dict['token_type_ids'], twi_batch_dict['attention_mask']
         batch_n_1_bert_items.append([twi_input_ids, twi_token_type_ids, twi_attention_mask])
         
-    batch_query_dict = tokenizer(batch_queries, is_split_into_words=True, truncation=True, padding=True, return_tensors='pt')
+    batch_query_dict = tokenizer(batch_queries, is_split_into_words=True, truncation=True, padding=True, return_tensors='pt', max_length=128)
     input_ids, token_type_ids, attention_mask = batch_query_dict['input_ids'], batch_query_dict['token_type_ids'], batch_query_dict['attention_mask']
     batch_query_bert_items=[input_ids, token_type_ids, attention_mask ]
     return batch_query_bert_items, batch_n_1_bert_items, torch.tensor(batch_query_bows), torch.tensor(batch_n_1_bows), torch.tensor(batch_labels)
@@ -216,14 +216,14 @@ class TimeScratchDataset(torch.utils.data.Dataset):
         self.process_data_file()
     
     def __getitem__(self, idx): 
-        twitter, hashtag = self.twitter_hashtag[idx]
+        twitter, hashtag, timelabel = self.twitter_hashtag[idx]
         query_tokens = self.get_twitter_tokens(twitter[0])  # a token list with length of n
         future_tokens = self.get_twitter_tokens(twitter[1])
         hashtag_label = self.get_hashtag_label(hashtag)  # an int element converted to tensor
         query_bow_feature  = self.get_bow_features(twitter[0])
         future_bow_feature =  self.get_bow_features(twitter[1])
 
-        return query_tokens, future_tokens, query_bow_feature, future_bow_feature, torch.tensor(hashtag_label)
+        return query_tokens, future_tokens, query_bow_feature, future_bow_feature, torch.tensor(hashtag_label), torch.tensor(timelabel)
     
     def get_bow_features(self, twitter):
         text = twitter.lower()
@@ -264,14 +264,14 @@ class TimeScratchDataset(torch.utils.data.Dataset):
         f = open(self.data_file)
         for line in f:
             l = line.strip('\n').split('\t')
-            query, future, hashtag = str(l[1]).lower(), str(l[2]).lower(), int(l[0])
+            timelabel, hashtag, query, future = int(l[0]), str(l[1]).lower(), str(l[2]).lower(), str(l[3]).lower()
             twitter = [query, future]
             if len(query) > 0 and len(future) > 0 and len(str(hashtag)) > 0:
-                self.twitter_hashtag.append((twitter, hashtag))
+                self.twitter_hashtag.append((twitter, hashtag, timelabel))
 
         # formulate vocab_dict
         if self.dataset_mode==True:
-            for twitter, _ in self.twitter_hashtag:
+            for twitter, _, _ in self.twitter_hashtag:
                 for twi in twitter:
                     text = twi.lower()
                     remove = str.maketrans('', '',string.punctuation)
@@ -315,23 +315,25 @@ def time_my_collate(batch):
     batch_query_bows = []
     batch_future_bows = []
     batch_labels = []
+    batch_time_labels = []
     
-    for query_tokens, future_tokens, query_bow_feature, future_bow_features, hashtag_label in batch:
+    for query_tokens, future_tokens, query_bow_feature, future_bow_features, hashtag_label, time_label in batch:
         batch_queries.append(query_tokens)
         batch_futures.append(future_tokens)
         batch_query_bows.append(query_bow_feature)
         batch_future_bows.append(future_bow_features)
         batch_labels.append(hashtag_label)
+        batch_time_labels.append(time_label)
 
-    batch_query_dict = tokenizer(batch_queries, is_split_into_words=True, truncation=True, padding=True, return_tensors='pt')
+    batch_query_dict = tokenizer(batch_queries, is_split_into_words=True, truncation=True, padding=True, return_tensors='pt', max_length=128)
     query_input_ids, query_token_type_ids, query_attention_mask = batch_query_dict['input_ids'], batch_query_dict['token_type_ids'], batch_query_dict['attention_mask']
     batch_query_bert_items=[query_input_ids, query_token_type_ids, query_attention_mask]
     
-    batch_future_dict = tokenizer(batch_futures, is_split_into_words=True, truncation=True, padding=True, return_tensors='pt')
+    batch_future_dict = tokenizer(batch_futures, is_split_into_words=True, truncation=True, padding=True, return_tensors='pt', max_length=128)
     future_input_ids, future_token_type_ids, future_attention_mask = batch_future_dict['input_ids'], batch_future_dict['token_type_ids'], batch_future_dict['attention_mask']
     batch_future_bert_items=[future_input_ids, future_token_type_ids, future_attention_mask]
     
-    return batch_query_bert_items, batch_future_bert_items, torch.tensor(batch_query_bows), torch.tensor(batch_future_bows), torch.tensor(batch_labels)
+    return batch_query_bert_items, batch_future_bert_items, torch.tensor(batch_query_bows), torch.tensor(batch_future_bows), torch.tensor(batch_labels), torch.tensor(batch_time_labels)
 
 
 
