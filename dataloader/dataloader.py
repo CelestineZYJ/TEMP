@@ -223,7 +223,15 @@ class TimeScratchDataset(torch.utils.data.Dataset):
         query_bow_feature  = self.get_bow_features(twitter[0])
         future_bow_feature =  self.get_bow_features(twitter[1])
 
-        return query_tokens, future_tokens, query_bow_feature, future_bow_feature, torch.tensor(hashtag_label), torch.tensor(timelabel)
+        try:
+            return query_tokens, future_tokens, query_bow_feature, future_bow_feature, torch.tensor(hashtag_label), torch.tensor(timelabel)
+        except:
+            print(type(query_tokens))
+            print(type(future_tokens))
+            print(type(query_bow_feature))
+            print(type(future_bow_feature))
+            print(type(hashtag_label))
+            print(type(timelabel))
     
     def get_bow_features(self, twitter):
         text = twitter.lower()
@@ -264,7 +272,7 @@ class TimeScratchDataset(torch.utils.data.Dataset):
         f = open(self.data_file)
         for line in f:
             l = line.strip('\n').split('\t')
-            timelabel, hashtag, query, future = int(l[0]), str(l[1]).lower(), str(l[2]).lower(), str(l[3]).lower()
+            hashtag, timelabel, query, future = int(l[0]), str(l[1]).lower(), str(l[2]).lower(), str(l[3]).lower()
             twitter = [query, future]
             if len(query) > 0 and len(future) > 0 and len(str(hashtag)) > 0:
                 self.twitter_hashtag.append((twitter, hashtag, timelabel))
@@ -340,13 +348,13 @@ def time_my_collate(batch):
 def load_recon_dataloader(dataset, path_to_data, train, batch_size, bow_vocab_size, bow_vocab_list):
     dataset = ReconScratchDataset(data_file=path_to_data, dataset_mode=train, vocab_size=bow_vocab_size, vocab_list=bow_vocab_list)
     data_length=dataset.__len__()
-
-    dataloader = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=recon_my_collate, num_workers=8)
+    
+    dataloader = data.DataLoader(dataset, batch_size=batch_size, shuffle=train, collate_fn=recon_my_collate, num_workers=8)
     return dataloader, data_length, dataset.get_vocab_list()
 
 def load_time_dataloader(dataset, path_to_data, train, batch_size, bow_vocab_size, bow_vocab_list):
     dataset = TimeScratchDataset(data_file=path_to_data, dataset_mode=train, vocab_size=bow_vocab_size, vocab_list=bow_vocab_list)
     data_length=dataset.__len__()
 
-    dataloader = data.DataLoader(dataset, batch_size=batch_size, shuffle=True, collate_fn=time_my_collate, num_workers=8)
+    dataloader = data.DataLoader(dataset, batch_size=batch_size, shuffle=train, collate_fn=time_my_collate, num_workers=8)
     return dataloader, data_length, dataset.get_vocab_list()
