@@ -272,7 +272,7 @@ class TimeScratchDataset(torch.utils.data.Dataset):
         f = open(self.data_file)
         for line in f:
             l = line.strip('\n').split('\t')
-            hashtag, timelabel, query, future = int(l[0]), str(l[1]).lower(), str(l[2]).lower(), str(l[3]).lower()
+            hashtag, timelabel, query, future = int(l[0]), int(l[1]), str(l[2]).lower(), str(l[3]).lower()
             twitter = [query, future]
             if len(query) > 0 and len(future) > 0 and len(str(hashtag)) > 0:
                 self.twitter_hashtag.append((twitter, hashtag, timelabel))
