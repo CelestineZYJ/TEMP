@@ -33,7 +33,7 @@ def unfix_model(model):
         
 class Trainer():
 
-    def __init__(self, device, train, which_loader, directory, dataset, path_to_data, batch_size, bow_vocab_size, supervised_max_iters, pseudo_max_iters, resume_iters, restored_model_path, lr, mlp_lr, weight_decay, beta1, beta2, milestones, scheduler_gamma, rec_weight, X_kld_weight, S_kld_weight, inter_kld_weight, print_freq, sample_freq, model_save_freq, test_iters, test_path):
+    def __init__(self, device, train, which_loader, directory, dataset, path_to_data, batch_size, bow_vocab_size, supervised_max_iters, pseudo_max_iters, sphere_max_iters, resume_iters, restored_model_path, lr, mlp_lr, weight_decay, beta1, beta2, milestones, scheduler_gamma, rec_weight, X_kld_weight, S_kld_weight, inter_kld_weight, print_freq, sample_freq, model_save_freq, test_iters, test_path):
 
         self.device = device
         self.train_bool = train
@@ -87,14 +87,15 @@ class Trainer():
                                                         bow_vocab_size = self.bow_vocab_size,
                                                         bow_vocab_list=train_bow_vocab_list
                                                         )
-        self.train_pseudo_data_loader, data_length[self.which_loader], _ = load_time_dataloader(dataset = self.dataset, 
-                                                        path_to_data = self.path_to_data['time_pseudo'],
-                                                        train = True,
-                                                        batch_size= self.batch_size,
-                                                        bow_vocab_size = self.bow_vocab_size,
-                                                        bow_vocab_list=[]
-                                                        )
+        # self.train_pseudo_data_loader, data_length[self.which_loader], _ = load_time_dataloader(dataset = self.dataset, 
+        #                                                 path_to_data = self.path_to_data['time_pseudo'],
+        #                                                 train = True,
+        #                                                 batch_size= self.batch_size,
+        #                                                 bow_vocab_size = self.bow_vocab_size,
+        #                                                 bow_vocab_list=[]
+        #                                                 )
         
+        self.train_pseudo_data_loader=0
         self.train_sphere_data_loader = self.train_pseudo_data_loader
         
         self.test_time_data_loader, data_length[self.which_loader], _ = load_time_dataloader(dataset = self.dataset, 
@@ -132,6 +133,7 @@ class Trainer():
         ################
         self.supervised_max_iters = supervised_max_iters
         self.pseudo_max_iters = pseudo_max_iters
+        self.sphere_max_iters = sphere_max_iters
         self.resume_iters = resume_iters
         self.global_iters = self.resume_iters
         self.restored_model_path = restored_model_path
@@ -254,8 +256,7 @@ class Trainer():
         self.bertmodel.load_state_dict(torch.load(path+f'bertmodel_{resume_iters}.pt'))
         self.mlp.load_state_dict(torch.load(path+f'mlp_{resume_iters}.pt'))
         self.fc_mlp_ntm.load_state_dict(torch.load(path+f'fc_mlp_ntm_{resume_iters}.pt'))
-        # self.sphere_mlp.load_state_dict(torch.load(path+f'sphere_mlp_{resume_iters}.pt'))
-        # self.sphere_mlp.load_state_dict(torch.load(path+f'time_sphere_mlp_{resume_iters}.pt'))
+        self.sphere_mlp.load_state_dict(torch.load(path+f'sphere_mlp_{resume_iters}.pt'))
         self.zx_encoder.load_state_dict(torch.load(path+f'zx_encoder_{resume_iters}.pt'))
         self.zy_encoder.load_state_dict(torch.load(path+f'zy_encoder_{resume_iters}.pt'))
         self.FE.load_state_dict(torch.load(path+f'FE_{resume_iters}.pt'))
@@ -402,7 +403,7 @@ class Trainer():
         batch_query_bert_items, batch_future_bert_items, X_fixed , Y_fixed, cls_label = self.Unpack_Data(data_fixed)
         
 
-        if self.resume_iters > 100:
+        if self.resume_iters > 100 and self.resume_iters < self.supervised_max_iters:
             self.load_model(self.restored_model_path, self.resume_iters)
             self.bertmodel.to(self.device)
             self.mlp.to(self.device)
@@ -420,13 +421,11 @@ class Trainer():
         start_time = time.time()
         
         while self.global_iters <= self.supervised_max_iters:
-            if self.global_iters % 100 == 0 :
-                print('\nself.supervised_max_iters: '+str(self.supervised_max_iters)+' / self.global_iters: '+str(self.global_iters)+' / '+str((self.global_iters+1)*100/float(self.supervised_max_iters))+'%')
-            # try:
-            batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label = self.Unpack_Data(next(data_iter))
-            # except:
-            #     data_iter = iter(self.data_loader)
-            #     batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label = self.Unpack_Data(next(data_iter))
+            try:
+                batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label = self.Unpack_Data(next(data_iter))
+            except:
+                data_iter = iter(self.data_loader)
+                batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label = self.Unpack_Data(next(data_iter))
                 
             query_batch_dict = {'input_ids': batch_query_bert_items[0].to(self.device), 'token_type_ids': batch_query_bert_items[1].to(self.device), 'attention_mask': batch_query_bert_items[2].to(self.device)}
             # inputs = tokenizer("Hello world!", return_tensors="pt").to(self.device)
@@ -491,7 +490,9 @@ class Trainer():
             # print('*'*200)
             # print(pseudo_future_cls_label)
             # print(pred_future_cls_label)
-            
+            if self.global_iters % 100 == 0 :
+                print('\nself.supervised_max_iters: '+str(self.supervised_max_iters)+' / self.global_iters: '+str(self.global_iters)+' / '+str((self.global_iters+1)*100/float(self.supervised_max_iters))+'%')
+           
             if self.global_iters % 100 == 0 :
                 print('-'*10+'train: '+'-'*10)
                 
@@ -530,13 +531,13 @@ class Trainer():
                 fix_model(self.x_decoder)
                 fix_model(self.y_decoder)
                 
-                loss.backward()
-                self.optimizer_exc_enc.step()
-                self.optimizer_shr_enc.step()
-                self.optimizer_dec.step()
+                # loss.backward()
+                # self.optimizer_exc_enc.step()
+                # self.optimizer_shr_enc.step()
+                # self.optimizer_dec.step()
                 
-                self.optimizer_mlp.step()
-                self.scheduler_mlp.step()
+                # self.optimizer_mlp.step()
+                # self.scheduler_mlp.step()
                 
             else:
                 unfix_model( self.bertmodel)
@@ -577,10 +578,10 @@ class Trainer():
         # if self.max_iters / self.global_iters == 10:
         #     print(str(self.which_loader)+' loss: '+str(loss))
             
-            if self.global_iters % 100 == 0 and self.global_iters >=4000 and self.global_iters <= 6000 or self.global_iters == 100:
-                self.save_model(self.restored_model_path, self.global_iters)
+            # if self.global_iters % 100 == 0 and self.global_iters >=3000 and self.global_iters <= 5000 or self.global_iters == 100:
+            #     self.save_model(self.restored_model_path, self.global_iters)
             ################################################--valid--########################################################################
-            if self.global_iters % 100 == 0 and self.global_iters >=1000:
+            if self.global_iters % 100 == 0 and self.global_iters >=3000:
                 valid_total_loss = 0
                 valid_mlp_loss = 0
                 valid_true_count = 0
@@ -650,85 +651,9 @@ class Trainer():
                 print('valid set accuracy: '+str(float(valid_true_count/valid_all_count)))
             
             ################################################--test--########################################################################
-            '''
-            if self.global_iters % 100 == 0 and self.global_iters >= 1000:
-                test_total_loss = 0
-                test_mlp_loss = 0
-                test_true_count = 0
-                test_all_count = 0
-                
-                for test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels, _ in tqdm(self.test_data_loader):
-                    test_data = test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels
-
-               
-                    test_batch_query_bert_items, test_batch_future_bert_items, test_input_X, test_input_Y, test_cls_label = self.Unpack_Data(test_data)
-                    test_query_batch_dict = {'input_ids': test_batch_query_bert_items[0].to(self.device), 'token_type_ids': test_batch_query_bert_items[1].to(self.device), 'attention_mask': test_batch_query_bert_items[2].to(self.device)}
-                    test_query_bert = self.bertmodel(**test_query_batch_dict)[1] # (query_bert_embedding.size()): batch_size*768
-                    
-                    if len(test_batch_future_bert_items) == 10 and isinstance(test_batch_future_bert_items, list):
-                        # now the batch is for the recon batch where 10 future posts are ready for bert and bow
-                        test_future_bert=0
-                        for test_each_future in test_batch_future_bert_items:
-                            test_each_batch_dict = {'input_ids': test_each_future[0].to(self.device), 'token_type_ids': test_each_future[1].to(self.device), 'attention_mask': test_each_future[2].to(self.device)}
-                            test_each_bert_embedding = self.bertmodel(**test_each_batch_dict)[1]
-                            test_future_bert += test_each_bert_embedding
-                        test_future_bert = test_each_bert_embedding/10.0
-                    else:
-                        test_future_batch_dict = {'input_ids': test_batch_future_bert_items[0].to(self.device), 'token_type_ids': test_batch_future_bert_items[1].to(self.device), 'attention_mask': test_batch_future_bert_items[2].to(self.device)}
-                        test_future_bert = self.bertmodel(**test_future_batch_dict)[1]
-                    
-                    test_query_bert = test_query_bert.to(self.device)
-                    test_future_bert = test_future_bert.to(self.device)
-                    
-                    # print(test_input_X.size())
-                    test_zx_mu, test_zx_log_var, test_zx = self.zx_encoder(test_input_X)
-                    test_zy_mu, test_zy_log_var, test_zy = self.zy_encoder(test_input_Y)
-                    test_feature_X = self.FE(test_input_X)
-                    test_feature_Y = self.FE(test_input_Y)
-                    test_zx_s_mu, test_zx_s_log_var, test_zx_s = self.zx_s_encoder(test_feature_X)
-                    test_zy_s_mu, test_zy_s_log_var, test_zy_s = self.zy_s_encoder(test_feature_Y)
-                    test_zs_mu, test_zs_log_var, test_zs = self.zs_encoder(test_feature_X, test_feature_Y)
-
-                    test_recon_X = self.x_decoder(test_zx, test_zs)
-                    test_recon_Y = self.y_decoder(test_zy, test_zs)
-                    
-                    # test_zs=torch.zeros_like(test_zs)
-                    # test_mlp_input = torch.cat((test_query_bert, test_zs/10), dim=1)
-                    # print('*'*100)
-                    # print(test_query_bert)
-                    # print(test_zx_s)
-                    # test_zx_s = torch.zeros_like(test_zx_s)
-                    test_mlp_input = torch.cat((test_query_bert, test_zx_s), dim=1)
-                    # test_mlp_input = torch.cat((test_temp, test_zs/10), dim=1)
-                    
-                    test_pred_cls_label = self.mlp(self.fc_mlp_ntm(test_mlp_input))
-
-                    
-                    # each_batch_test_loss, each_batch_mlp_loss = self.loss_function(test_recon_X, test_recon_Y, test_input_X, test_input_Y, 
-                    #                         test_zx_mu, test_zy_mu, test_zx_s_mu, test_zy_s_mu, test_zs_mu, 
-                    #                         test_zx_log_var, test_zy_log_var, test_zx_s_log_var, test_zy_s_log_var, test_zs_log_var, test_pred_cls_label, test_cls_label)
-                    # test_total_loss += each_batch_test_loss
-                    # test_mlp_loss += each_batch_mlp_loss
-                    
-                    test_pred_max_labels = test_pred_cls_label.argmax(dim=1)
-
-                    test_true = test_cls_label.cpu().numpy()
-                    test_pred = test_pred_max_labels.cpu().numpy()
-                    acc = (test_true - test_pred).tolist()
-                    for i in acc:
-                        test_all_count += 1
-                        if i == 0:
-                            test_true_count += 1
-                    
-                print('-'*10+'test: '+'-'*10)
-                # print('test_mlp_loss: '+str(test_mlp_loss/10))
-                # print('test_total_loss: '+str(test_total_loss/10))
-                print('test set accuracy: '+str(float(test_true_count/test_all_count)))
-            '''
-            ################################################--test--########################################################################    
-            
+           
             lines=[]
-            if self.global_iters % 100 == 0 and self.global_iters >= 1000:
+            if self.global_iters % 100 == 0 and self.global_iters >= 2000:
                 test_total_loss = 0
                 test_mlp_loss = 0
                 test_true_count = 0
@@ -807,7 +732,7 @@ class Trainer():
                     f.writelines(lines)
             ################################################--pseudo--########################################################################    
             
-            if self.global_iters == 5000:
+            if self.global_iters == 3700:
                 test_total_loss = 0
                 test_mlp_loss = 0
                 test_true_count = 0
@@ -901,7 +826,7 @@ class Trainer():
                     
             
             ################################################--test--########################################################################
-            if self.global_iters % 100 == 0 and self.global_iters >= 1000:
+            if self.global_iters % 100 == 0 and self.global_iters >= 2000:
                 test_total_loss = 0
                 test_mlp_loss = 0
                 test_true_count = 0
@@ -980,12 +905,12 @@ class Trainer():
     def train_pseudo(self):
         
         data_iter = iter(self.data_loader)
-        data_fixed = next(data_iter)
-        batch_query_bert_items, batch_future_bert_items, X_fixed , Y_fixed, cls_label = self.Unpack_Data(data_fixed)
+        # data_fixed = next(data_iter)
+        # batch_query_bert_items, batch_future_bert_items, X_fixed , Y_fixed, cls_label = self.Unpack_Data(data_fixed)
         
 
         if self.resume_iters > 100:
-            self.load_model(self.restored_model_path, self.resume_iters)
+            # self.load_model(self.restored_model_path, self.resume_iters)
             self.bertmodel.to(self.device)
             self.mlp.to(self.device)
             self.zx_encoder.to(self.device)
@@ -1004,11 +929,11 @@ class Trainer():
         while self.global_iters <= self.pseudo_max_iters:
             if self.global_iters % 100 == 0 :
                 print('\nself.pseudo_max_iters: '+str(self.pseudo_max_iters)+' / self.global_iters: '+str(self.global_iters)+' / '+str((self.global_iters+1)*100/float(self.pseudo_max_iters))+'%')
-            # try:
-            batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label, cls_pseudo_label = self.Unpack_Data(next(data_iter))
-            # except:
-            #     data_iter = iter(self.data_loader)
-            #     batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label = self.Unpack_Data(next(data_iter))
+            try:
+                batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label, cls_pseudo_label = self.Unpack_Data(next(data_iter))
+            except:
+                data_iter = iter(self.data_loader)
+                batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label, cls_pseudo_label = self.Unpack_Data(next(data_iter))
                 
             query_batch_dict = {'input_ids': batch_query_bert_items[0].to(self.device), 'token_type_ids': batch_query_bert_items[1].to(self.device), 'attention_mask': batch_query_bert_items[2].to(self.device)}
             # inputs = tokenizer("Hello world!", return_tensors="pt").to(self.device)
@@ -1066,8 +991,8 @@ class Trainer():
                                         zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
                                         zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, y_pred_cls_label, cls_pseudo_label)
             
-            loss = x_loss + y_loss
-            mlp_loss = x_mlp_loss + y_mlp_loss
+            loss = y_loss + x_loss
+            mlp_loss = y_mlp_loss + x_mlp_loss
             
             # zero_zx_s = torch.zeros_like(zx_s)
             # pseudo_future_mlp_input = torch.cat((future_bert, zero_zx_s), dim=1)
@@ -1094,12 +1019,57 @@ class Trainer():
                 # print('train_total_loss: '+str(loss_Y))
                 
             
-            if self.global_iters <= 1000:#3000: #300:  1000 for stance
+            if self.global_iters <= 6000:#3000: #300:  1000 for stance
                 fix_model( self.bertmodel)
                 fix_model(self.fc_mlp_ntm)
                 fix_model(self.mlp)
                 
-                loss.backward()
+                x_loss.backward()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+                self.optimizer_mlp.step()
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+                
+                
+                self.optimizer_mlp.zero_grad()
+                self.optimizer_exc_enc.zero_grad()
+                self.optimizer_shr_enc.zero_grad()
+                self.optimizer_dec.zero_grad()
+
+                zx_mu, zx_log_var, zx = self.zx_encoder(input_X)
+                zy_mu, zy_log_var, zy = self.zy_encoder(input_Y)
+                feature_X = self.FE(input_X)
+                feature_Y = self.FE(input_Y)
+                zx_s_mu, zx_s_log_var, zx_s = self.zx_s_encoder(feature_X)
+                zy_s_mu, zy_s_log_var, zy_s = self.zy_s_encoder(feature_Y)
+                zs_mu, zs_log_var, zs = self.zs_encoder(feature_X, feature_Y)
+
+                recon_X = self.x_decoder(zx, zs)
+                recon_Y = self.y_decoder(zy, zs)
+                # zx_s=torch.zeros_like(zx_s)
+                x_mlp_input = torch.cat((query_bert, zx_s), dim=1)
+                
+                
+                x_pred_cls_label = self.mlp(self.fc_mlp_ntm(x_mlp_input))
+                x_loss, x_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, x_pred_cls_label, cls_label)
+                
+                future_bert = self.bertmodel(**future_batch_dict)[1]
+                
+                y_mlp_input = torch.cat((future_bert, zy_s), dim=1)
+                
+                
+                y_pred_cls_label = self.mlp(self.fc_mlp_ntm(y_mlp_input))
+                y_loss, y_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, y_pred_cls_label, cls_pseudo_label)
+                
+                y_loss.backward()
                 self.optimizer_exc_enc.step()
                 self.optimizer_shr_enc.step()
                 self.optimizer_dec.step()
@@ -1110,7 +1080,9 @@ class Trainer():
                 self.scheduler_exc_enc.step()
                 self.scheduler_shr_enc.step()
                 self.scheduler_dec.step()
-            elif self.global_iters <= 4000: #600:   4000 for stance
+                
+                
+            elif self.global_iters <= 9000: #600:   4000 for stance
                 unfix_model( self.bertmodel)
                 unfix_model(self.fc_mlp_ntm)
                 unfix_model(self.mlp)
@@ -1123,13 +1095,57 @@ class Trainer():
                 fix_model(self.x_decoder)
                 fix_model(self.y_decoder)
                 
-                loss.backward()
+                x_loss.backward()
+                self.optimizer_mlp.step()
                 self.optimizer_exc_enc.step()
                 self.optimizer_shr_enc.step()
                 self.optimizer_dec.step()
-                
-                self.optimizer_mlp.step()
+
                 self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+
+
+                self.optimizer_mlp.zero_grad()
+                self.optimizer_exc_enc.zero_grad()
+                self.optimizer_shr_enc.zero_grad()
+                self.optimizer_dec.zero_grad()
+
+                zx_mu, zx_log_var, zx = self.zx_encoder(input_X)
+                zy_mu, zy_log_var, zy = self.zy_encoder(input_Y)
+                feature_X = self.FE(input_X)
+                feature_Y = self.FE(input_Y)
+                zx_s_mu, zx_s_log_var, zx_s = self.zx_s_encoder(feature_X)
+                zy_s_mu, zy_s_log_var, zy_s = self.zy_s_encoder(feature_Y)
+                zs_mu, zs_log_var, zs = self.zs_encoder(feature_X, feature_Y)
+
+                recon_X = self.x_decoder(zx, zs)
+                recon_Y = self.y_decoder(zy, zs)
+                
+                future_bert = self.bertmodel(**future_batch_dict)[1]
+                
+                y_mlp_input = torch.cat((future_bert, zy_s), dim=1)
+                
+                
+                y_pred_cls_label = self.mlp(self.fc_mlp_ntm(y_mlp_input))
+                y_loss, y_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, y_pred_cls_label, cls_pseudo_label)
+                
+                
+                y_loss.backward()
+                self.optimizer_mlp.step()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+                
+                
                 
             else:
                 unfix_model( self.bertmodel)
@@ -1144,7 +1160,7 @@ class Trainer():
                 unfix_model(self.x_decoder)
                 unfix_model(self.y_decoder)
                 
-                loss.backward()
+                x_loss.backward()
                 self.optimizer_mlp.step()
                 self.optimizer_exc_enc.step()
                 self.optimizer_shr_enc.step()
@@ -1155,6 +1171,49 @@ class Trainer():
                 self.scheduler_shr_enc.step()
                 self.scheduler_dec.step()
 
+                self.optimizer_mlp.zero_grad()
+                self.optimizer_exc_enc.zero_grad()
+                self.optimizer_shr_enc.zero_grad()
+                self.optimizer_dec.zero_grad()
+
+                zx_mu, zx_log_var, zx = self.zx_encoder(input_X)
+                zy_mu, zy_log_var, zy = self.zy_encoder(input_Y)
+                feature_X = self.FE(input_X)
+                feature_Y = self.FE(input_Y)
+                zx_s_mu, zx_s_log_var, zx_s = self.zx_s_encoder(feature_X)
+                zy_s_mu, zy_s_log_var, zy_s = self.zy_s_encoder(feature_Y)
+                zs_mu, zs_log_var, zs = self.zs_encoder(feature_X, feature_Y)
+
+                recon_X = self.x_decoder(zx, zs)
+                recon_Y = self.y_decoder(zy, zs)
+                # zx_s=torch.zeros_like(zx_s)
+                x_mlp_input = torch.cat((query_bert, zx_s), dim=1)
+                
+                
+                x_pred_cls_label = self.mlp(self.fc_mlp_ntm(x_mlp_input))
+                x_loss, x_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, x_pred_cls_label, cls_label)
+                
+                y_mlp_input = torch.cat((future_bert, zy_s), dim=1)
+                
+                
+                y_pred_cls_label = self.mlp(self.fc_mlp_ntm(y_mlp_input))
+                y_loss, y_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, y_pred_cls_label, cls_pseudo_label)
+                
+                
+                y_loss.backward()
+                self.optimizer_mlp.step()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
 
             # loss.backward()
             # self.optimizer_mlp.step()
@@ -1170,10 +1229,10 @@ class Trainer():
         # if self.max_iters / self.global_iters == 10:
         #     print(str(self.which_loader)+' loss: '+str(loss))
             
-            if self.global_iters % 100 == 0 and self.global_iters >=4000 and self.global_iters <= 6000:
-                self.save_model(self.restored_model_path, self.global_iters)
+            # if self.global_iters % 100 == 0 and self.global_iters >=4000 and self.global_iters <= 6000:
+            #     self.save_model(self.restored_model_path, self.global_iters)
             ################################################--valid--########################################################################
-            if self.global_iters % 100 == 0 and self.global_iters >=5000:
+            if self.global_iters % 100 == 0 and self.global_iters >=7000:
                 valid_total_loss = 0
                 valid_mlp_loss = 0
                 valid_true_count = 0
@@ -1242,86 +1301,10 @@ class Trainer():
                 # print('valid_total_loss: '+str(valid_total_loss))
                 print('valid set accuracy: '+str(float(valid_true_count/valid_all_count)))
             
-            ################################################--test--########################################################################
-            '''
-            if self.global_iters % 100 == 0 and self.global_iters >= 1000:
-                test_total_loss = 0
-                test_mlp_loss = 0
-                test_true_count = 0
-                test_all_count = 0
-                
-                for test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels, _ in tqdm(self.test_data_loader):
-                    test_data = test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels
-
-               
-                    test_batch_query_bert_items, test_batch_future_bert_items, test_input_X, test_input_Y, test_cls_label = self.Unpack_Data(test_data)
-                    test_query_batch_dict = {'input_ids': test_batch_query_bert_items[0].to(self.device), 'token_type_ids': test_batch_query_bert_items[1].to(self.device), 'attention_mask': test_batch_query_bert_items[2].to(self.device)}
-                    test_query_bert = self.bertmodel(**test_query_batch_dict)[1] # (query_bert_embedding.size()): batch_size*768
-                    
-                    if len(test_batch_future_bert_items) == 10 and isinstance(test_batch_future_bert_items, list):
-                        # now the batch is for the recon batch where 10 future posts are ready for bert and bow
-                        test_future_bert=0
-                        for test_each_future in test_batch_future_bert_items:
-                            test_each_batch_dict = {'input_ids': test_each_future[0].to(self.device), 'token_type_ids': test_each_future[1].to(self.device), 'attention_mask': test_each_future[2].to(self.device)}
-                            test_each_bert_embedding = self.bertmodel(**test_each_batch_dict)[1]
-                            test_future_bert += test_each_bert_embedding
-                        test_future_bert = test_each_bert_embedding/10.0
-                    else:
-                        test_future_batch_dict = {'input_ids': test_batch_future_bert_items[0].to(self.device), 'token_type_ids': test_batch_future_bert_items[1].to(self.device), 'attention_mask': test_batch_future_bert_items[2].to(self.device)}
-                        test_future_bert = self.bertmodel(**test_future_batch_dict)[1]
-                    
-                    test_query_bert = test_query_bert.to(self.device)
-                    test_future_bert = test_future_bert.to(self.device)
-                    
-                    # print(test_input_X.size())
-                    test_zx_mu, test_zx_log_var, test_zx = self.zx_encoder(test_input_X)
-                    test_zy_mu, test_zy_log_var, test_zy = self.zy_encoder(test_input_Y)
-                    test_feature_X = self.FE(test_input_X)
-                    test_feature_Y = self.FE(test_input_Y)
-                    test_zx_s_mu, test_zx_s_log_var, test_zx_s = self.zx_s_encoder(test_feature_X)
-                    test_zy_s_mu, test_zy_s_log_var, test_zy_s = self.zy_s_encoder(test_feature_Y)
-                    test_zs_mu, test_zs_log_var, test_zs = self.zs_encoder(test_feature_X, test_feature_Y)
-
-                    test_recon_X = self.x_decoder(test_zx, test_zs)
-                    test_recon_Y = self.y_decoder(test_zy, test_zs)
-                    
-                    # test_zs=torch.zeros_like(test_zs)
-                    # test_mlp_input = torch.cat((test_query_bert, test_zs/10), dim=1)
-                    # print('*'*100)
-                    # print(test_query_bert)
-                    # print(test_zx_s)
-                    # test_zx_s = torch.zeros_like(test_zx_s)
-                    test_mlp_input = torch.cat((test_query_bert, test_zx_s), dim=1)
-                    # test_mlp_input = torch.cat((test_temp, test_zs/10), dim=1)
-                    
-                    test_pred_cls_label = self.mlp(self.fc_mlp_ntm(test_mlp_input))
-
-                    
-                    # each_batch_test_loss, each_batch_mlp_loss = self.loss_function(test_recon_X, test_recon_Y, test_input_X, test_input_Y, 
-                    #                         test_zx_mu, test_zy_mu, test_zx_s_mu, test_zy_s_mu, test_zs_mu, 
-                    #                         test_zx_log_var, test_zy_log_var, test_zx_s_log_var, test_zy_s_log_var, test_zs_log_var, test_pred_cls_label, test_cls_label)
-                    # test_total_loss += each_batch_test_loss
-                    # test_mlp_loss += each_batch_mlp_loss
-                    
-                    test_pred_max_labels = test_pred_cls_label.argmax(dim=1)
-
-                    test_true = test_cls_label.cpu().numpy()
-                    test_pred = test_pred_max_labels.cpu().numpy()
-                    acc = (test_true - test_pred).tolist()
-                    for i in acc:
-                        test_all_count += 1
-                        if i == 0:
-                            test_true_count += 1
-                    
-                print('-'*10+'test: '+'-'*10)
-                # print('test_mlp_loss: '+str(test_mlp_loss/10))
-                # print('test_total_loss: '+str(test_total_loss/10))
-                print('test set accuracy: '+str(float(test_true_count/test_all_count)))
-            '''
-            ################################################--test--########################################################################    
+            ################################################--test--########################################################################   
             
             lines=[]
-            if self.global_iters % 100 == 0 and self.global_iters >= 5000:
+            if self.global_iters % 100 == 0 and self.global_iters >= 7000:
                 test_total_loss = 0
                 test_mlp_loss = 0
                 test_true_count = 0
@@ -1494,7 +1477,7 @@ class Trainer():
                     
             
             ################################################--test--########################################################################
-            if self.global_iters % 100 == 0 and self.global_iters >= 5000:
+            if self.global_iters % 100 == 0 and self.global_iters >= 7000:
                 test_total_loss = 0
                 test_mlp_loss = 0
                 test_true_count = 0
@@ -1568,7 +1551,621 @@ class Trainer():
                 # print('test_total_loss: '+str(test_total_loss/10))
                 print('test set accuracy: '+str(float(test_true_count/test_all_count)))
 
+    def train_sphere(self):
+        
+        data_iter = iter(self.data_loader)
+        # data_fixed = next(data_iter)
+        # batch_query_bert_items, batch_future_bert_items, X_fixed , Y_fixed, cls_label = self.Unpack_Data(data_fixed)
+        
 
+        if self.resume_iters > 100:
+            # self.load_model(self.restored_model_path, self.resume_iters)
+            self.bertmodel.to(self.device)
+            self.mlp.to(self.device)
+            self.zx_encoder.to(self.device)
+            self.zy_encoder.to(self.device)
+            self.FE.to(self.device)
+            self.zs_encoder.to(self.device)
+            self.zx_s_encoder.to(self.device)
+            self.zy_s_encoder.to(self.device)
+            self.x_decoder.to(self.device)
+            self.y_decoder.to(self.device)
+
+
+        print("Start Training...")
+        start_time = time.time()
+        
+        while self.global_iters <= self.pseudo_max_iters:
+            if self.global_iters % 100 == 0 :
+                print('\nself.pseudo_max_iters: '+str(self.pseudo_max_iters)+' / self.global_iters: '+str(self.global_iters)+' / '+str((self.global_iters+1)*100/float(self.pseudo_max_iters))+'%')
+            try:
+                batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label, cls_pseudo_label = self.Unpack_Data(next(data_iter))
+            except:
+                data_iter = iter(self.data_loader)
+                batch_query_bert_items, batch_future_bert_items, input_X, input_Y, cls_label, cls_pseudo_label = self.Unpack_Data(next(data_iter))
+                
+            query_batch_dict = {'input_ids': batch_query_bert_items[0].to(self.device), 'token_type_ids': batch_query_bert_items[1].to(self.device), 'attention_mask': batch_query_bert_items[2].to(self.device)}
+            # inputs = tokenizer("Hello world!", return_tensors="pt").to(self.device)
+            # outputs = self.bertmodel(**inputs)
+            # batch_query_bert_items=tokenizer(batch_query_bert_items, 'padding=True', 'truncation=True', return_tensors='pt')
+            # batch_query_bert_items = batch_query_bert_items.to(self.device)
+            
+            
+            if len(batch_future_bert_items) == 10 and isinstance(batch_future_bert_items, list):
+                # now the batch is for the recon batch where 10 future posts are ready for bert and bow
+                all_future=0
+                for each_future in batch_future_bert_items:
+                    each_batch_dict = {'input_ids': each_future[0].to(self.device), 'token_type_ids': each_future[1].to(self.device), 'attention_mask': each_future[2].to(self.device)}
+                    each_bert_embedding = self.bertmodel(**each_batch_dict)[1]
+                    all_future += each_bert_embedding
+                future_bert = each_bert_embedding/10.0
+            else:
+                future_batch_dict = {'input_ids': batch_future_bert_items[0].to(self.device), 'token_type_ids': batch_future_bert_items[1].to(self.device), 'attention_mask': batch_future_bert_items[2].to(self.device)}
+                
+            
+            query_bert = query_bert.to(self.device)
+            future_bert = future_bert.to(self.device)
+
+            self.global_iters += 1
+
+        
+            
+            if self.global_iters % 100 == 0 :
+                print('-'*10+'train: '+'-'*10)
+                
+                print('train_mlp_loss: '+str(mlp_loss))
+                print('train_ntm_loss: '+str(loss-mlp_loss))
+                # print('train_mlp_loss_Y: '+str(mlp_loss_Y))
+                # print('train_total_loss: '+str(loss_Y))
+                
+            
+            if self.global_iters < 0:#3000: #300:  1000 for stance
+                fix_model( self.bertmodel)
+                fix_model(self.fc_mlp_ntm)
+                fix_model(self.mlp)
+                
+                x_loss.backward()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+                self.optimizer_mlp.step()
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+                
+                
+                self.optimizer_mlp.zero_grad()
+                self.optimizer_exc_enc.zero_grad()
+                self.optimizer_shr_enc.zero_grad()
+                self.optimizer_dec.zero_grad()
+
+                zx_mu, zx_log_var, zx = self.zx_encoder(input_X)
+                zy_mu, zy_log_var, zy = self.zy_encoder(input_Y)
+                feature_X = self.FE(input_X)
+                feature_Y = self.FE(input_Y)
+                zx_s_mu, zx_s_log_var, zx_s = self.zx_s_encoder(feature_X)
+                zy_s_mu, zy_s_log_var, zy_s = self.zy_s_encoder(feature_Y)
+                zs_mu, zs_log_var, zs = self.zs_encoder(feature_X, feature_Y)
+
+                recon_X = self.x_decoder(zx, zs)
+                recon_Y = self.y_decoder(zy, zs)
+                # zx_s=torch.zeros_like(zx_s)
+                x_mlp_input = torch.cat((query_bert, zx_s), dim=1)
+                
+                
+                x_pred_cls_label = self.mlp(self.fc_mlp_ntm(x_mlp_input))
+                x_loss, x_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, x_pred_cls_label, cls_label)
+                
+                future_bert = self.bertmodel(**future_batch_dict)[1]
+                
+                y_mlp_input = torch.cat((future_bert, zy_s), dim=1)
+                
+                
+                y_pred_cls_label = self.mlp(self.fc_mlp_ntm(y_mlp_input))
+                y_loss, y_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, y_pred_cls_label, cls_pseudo_label)
+                
+                y_loss.backward()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.optimizer_mlp.step()
+                self.scheduler_mlp.step()
+                
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+                
+                
+            elif self.global_iters <= self.sphere_max_iters: #600:   4000 for stance
+                unfix_model( self.bertmodel)
+                # unfix_model(self.fc_mlp_ntm)
+                # unfix_model(self.mlp)
+                unfix_model(self.sphere_mlp)
+                
+                fix_model(self.zx_encoder)
+                fix_model(self.zy_encoder)
+                fix_model(self.FE)
+                fix_model(self.zx_s_encoder)
+                fix_model(self.zy_s_encoder)
+                fix_model(self.zs_encoder)
+                fix_model(self.x_decoder)
+                fix_model(self.y_decoder)
+                
+                
+                self.optimizer_mlp.zero_grad()
+                self.optimizer_exc_enc.zero_grad()
+                self.optimizer_shr_enc.zero_grad()
+                self.optimizer_dec.zero_grad()
+
+                zx_mu, zx_log_var, zx = self.zx_encoder(input_X)
+                zy_mu, zy_log_var, zy = self.zy_encoder(input_Y)
+                feature_X = self.FE(input_X)
+                feature_Y = self.FE(input_Y)
+                zx_s_mu, zx_s_log_var, zx_s = self.zx_s_encoder(feature_X)
+                zy_s_mu, zy_s_log_var, zy_s = self.zy_s_encoder(feature_Y)
+                zs_mu, zs_log_var, zs = self.zs_encoder(feature_X, feature_Y)
+
+                recon_X = self.x_decoder(zx, zs)
+                recon_Y = self.y_decoder(zy, zs)
+                
+                
+                query_bert = self.bertmodel(**query_batch_dict)[1] # (query_bert_embedding.size()): batch_size*768                
+                x_pred_cls_label = self.sphere_mlp(query_bert, recon_X)
+                x_loss, x_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, x_pred_cls_label, cls_label)
+                
+                x_loss.backward()
+                self.optimizer_mlp.step()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+
+
+                self.optimizer_mlp.zero_grad()
+                self.optimizer_exc_enc.zero_grad()
+                self.optimizer_shr_enc.zero_grad()
+                self.optimizer_dec.zero_grad()
+
+                zx_mu, zx_log_var, zx = self.zx_encoder(input_X)
+                zy_mu, zy_log_var, zy = self.zy_encoder(input_Y)
+                feature_X = self.FE(input_X)
+                feature_Y = self.FE(input_Y)
+                zx_s_mu, zx_s_log_var, zx_s = self.zx_s_encoder(feature_X)
+                zy_s_mu, zy_s_log_var, zy_s = self.zy_s_encoder(feature_Y)
+                zs_mu, zs_log_var, zs = self.zs_encoder(feature_X, feature_Y)
+
+                recon_X = self.x_decoder(zx, zs)
+                recon_Y = self.y_decoder(zy, zs)
+                
+                
+                future_bert = self.bertmodel(**future_batch_dict)[1]
+                y_pred_cls_label = self.sphere_mlp(future_bert, recon_Y)
+                y_loss, y_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, y_pred_cls_label, cls_pseudo_label)
+                
+                loss = y_loss + x_loss
+                mlp_loss = y_mlp_loss + x_mlp_loss
+                
+                y_loss.backward()
+                self.optimizer_mlp.step()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+                
+                
+                
+            else:
+                unfix_model( self.bertmodel)
+                unfix_model(self.fc_mlp_ntm)
+                unfix_model(self.mlp)
+                unfix_model(self.zx_encoder)
+                unfix_model(self.zy_encoder)
+                unfix_model(self.FE)
+                unfix_model(self.zx_s_encoder)
+                unfix_model(self.zy_s_encoder)
+                unfix_model(self.zs_encoder)
+                unfix_model(self.x_decoder)
+                unfix_model(self.y_decoder)
+                
+                x_loss.backward()
+                self.optimizer_mlp.step()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+
+                self.optimizer_mlp.zero_grad()
+                self.optimizer_exc_enc.zero_grad()
+                self.optimizer_shr_enc.zero_grad()
+                self.optimizer_dec.zero_grad()
+
+                zx_mu, zx_log_var, zx = self.zx_encoder(input_X)
+                zy_mu, zy_log_var, zy = self.zy_encoder(input_Y)
+                feature_X = self.FE(input_X)
+                feature_Y = self.FE(input_Y)
+                zx_s_mu, zx_s_log_var, zx_s = self.zx_s_encoder(feature_X)
+                zy_s_mu, zy_s_log_var, zy_s = self.zy_s_encoder(feature_Y)
+                zs_mu, zs_log_var, zs = self.zs_encoder(feature_X, feature_Y)
+
+                recon_X = self.x_decoder(zx, zs)
+                recon_Y = self.y_decoder(zy, zs)
+                # zx_s=torch.zeros_like(zx_s)
+                x_mlp_input = torch.cat((query_bert, zx_s), dim=1)
+                
+                
+                x_pred_cls_label = self.mlp(self.fc_mlp_ntm(x_mlp_input))
+                x_loss, x_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, x_pred_cls_label, cls_label)
+                
+                y_mlp_input = torch.cat((future_bert, zy_s), dim=1)
+                
+                
+                y_pred_cls_label = self.mlp(self.fc_mlp_ntm(y_mlp_input))
+                y_loss, y_mlp_loss = self.loss_function_X(recon_X, recon_Y, input_X, input_Y, 
+                                            zx_mu, zy_mu, zx_s_mu, zy_s_mu, zs_mu, 
+                                            zx_log_var, zy_log_var, zx_s_log_var, zy_s_log_var, zs_log_var, y_pred_cls_label, cls_pseudo_label)
+                
+                
+                y_loss.backward()
+                self.optimizer_mlp.step()
+                self.optimizer_exc_enc.step()
+                self.optimizer_shr_enc.step()
+                self.optimizer_dec.step()
+
+                self.scheduler_mlp.step()
+                self.scheduler_exc_enc.step()
+                self.scheduler_shr_enc.step()
+                self.scheduler_dec.step()
+
+           
+            
+            # if self.global_iters % 100 == 0 and self.global_iters >=4000 and self.global_iters <= 6000:
+            #     self.save_model(self.restored_model_path, self.global_iters)
+            ################################################--valid--########################################################################
+            if self.global_iters % 100 == 0 and self.global_iters >=7000:
+                valid_total_loss = 0
+                valid_mlp_loss = 0
+                valid_true_count = 0
+                valid_all_count = 0
+                
+                for valid_query_bert, valid_future_bert, valid_X_query_bows, valid_future_bows, valid_clas_labels, _ in tqdm(self.valid_data_loader):
+                    valid_data = valid_query_bert, valid_future_bert, valid_X_query_bows, valid_future_bows, valid_clas_labels
+
+               
+                    valid_batch_query_bert_items, valid_batch_future_bert_items, valid_input_X, valid_input_Y, valid_cls_label = self.Unpack_Data(valid_data)
+                    valid_query_batch_dict = {'input_ids': valid_batch_query_bert_items[0].to(self.device), 'token_type_ids': valid_batch_query_bert_items[1].to(self.device), 'attention_mask': valid_batch_query_bert_items[2].to(self.device)}
+                    valid_query_bert = self.bertmodel(**valid_query_batch_dict)[1] # (query_bert_embedding.size()): batch_size*768
+                    
+                    if len(valid_batch_future_bert_items) == 10 and isinstance(valid_batch_future_bert_items, list):
+                        # now the batch is for the recon batch where 10 future posts are ready for bert and bow
+                        valid_future_bert=0
+                        for valid_each_future in valid_batch_future_bert_items:
+                            valid_each_batch_dict = {'input_ids': valid_each_future[0].to(self.device), 'token_type_ids': valid_each_future[1].to(self.device), 'attention_mask': valid_each_future[2].to(self.device)}
+                            valid_each_bert_embedding = self.bertmodel(**valid_each_batch_dict)[1]
+                            valid_future_bert += valid_each_bert_embedding
+                        valid_future_bert = valid_each_bert_embedding/10.0
+                    else:
+                        valid_future_batch_dict = {'input_ids': valid_batch_future_bert_items[0].to(self.device), 'token_type_ids': valid_batch_future_bert_items[1].to(self.device), 'attention_mask': valid_batch_future_bert_items[2].to(self.device)}
+                        valid_future_bert = self.bertmodel(**valid_future_batch_dict)[1]
+                    
+                    valid_query_bert = valid_query_bert.to(self.device)
+                    valid_future_bert = valid_future_bert.to(self.device)
+                    
+
+                    valid_zx_mu, valid_zx_log_var, valid_zx = self.zx_encoder(valid_input_X)
+                    valid_zy_mu, valid_zy_log_var, valid_zy = self.zy_encoder(valid_input_Y)
+                    valid_feature_X = self.FE(valid_input_X)
+                    valid_feature_Y = self.FE(valid_input_Y)
+                    valid_zx_s_mu, valid_zx_s_log_var, valid_zx_s = self.zx_s_encoder(valid_feature_X)
+                    valid_zy_s_mu, valid_zy_s_log_var, valid_zy_s = self.zy_s_encoder(valid_feature_Y)
+                    valid_zs_mu, valid_zs_log_var, valid_zs = self.zs_encoder(valid_feature_X, valid_feature_Y)
+
+                    valid_recon_X = self.x_decoder(valid_zx, valid_zs)
+                    valid_recon_Y = self.y_decoder(valid_zy, valid_zs)
+
+                    # valid_zx_s = torch.zeros_like(valid_zx_s)
+                    # valid_mlp_input = torch.cat((valid_query_bert, valid_zx_s), dim=1)
+                   
+                    
+                    valid_pred_cls_label = self.sphere_mlp(valid_query_bert, valid_recon_X)
+
+                    
+                    # each_batch_valid_loss, each_batch_mlp_loss = self.loss_function(valid_recon_X, valid_recon_Y, valid_input_X, valid_input_Y, 
+                    #                         valid_zx_mu, valid_zy_mu, valid_zx_s_mu, valid_zy_s_mu, valid_zs_mu, 
+                    #                         valid_zx_log_var, valid_zy_log_var, valid_zx_s_log_var, valid_zy_s_log_var, valid_zs_log_var, valid_pred_cls_label, valid_cls_label)
+                    # valid_total_loss += each_batch_valid_loss
+                    # valid_mlp_loss += each_batch_mlp_loss
+                    
+                    valid_pred_max_labels = valid_pred_cls_label.argmax(dim=1)
+
+                    valid_true = valid_cls_label.cpu().numpy()
+                    valid_pred = valid_pred_max_labels.cpu().numpy()
+                    acc = (valid_true - valid_pred).tolist()
+                    for i in acc:
+                        valid_all_count += 1
+                        if i == 0:
+                            valid_true_count += 1
+                    
+                print('-'*10+'valid: '+'-'*10)
+                # print('valid_mlp_loss: '+str(valid_mlp_loss))
+                # print('valid_total_loss: '+str(valid_total_loss))
+                print('valid set accuracy: '+str(float(valid_true_count/valid_all_count)))
+            
+     
+            ################################################--test--########################################################################    
+            
+            lines=[]
+            if self.global_iters % 100 == 0 and self.global_iters >= 7000:
+                test_total_loss = 0
+                test_mlp_loss = 0
+                test_true_count = 0
+                test_all_count = 0
+                
+                for test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels, _ in tqdm(self.test_data_loader):
+                    test_data = test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels
+
+               
+                    test_batch_query_bert_items, test_batch_future_bert_items, test_input_X, test_input_Y, test_cls_label = self.Unpack_Data(test_data)
+                    test_query_batch_dict = {'input_ids': test_batch_query_bert_items[0].to(self.device), 'token_type_ids': test_batch_query_bert_items[1].to(self.device), 'attention_mask': test_batch_query_bert_items[2].to(self.device)}
+                    test_query_bert = self.bertmodel(**test_query_batch_dict)[1] # (query_bert_embedding.size()): batch_size*768
+                    
+                    if len(test_batch_future_bert_items) == 10 and isinstance(test_batch_future_bert_items, list):
+                        # now the batch is for the recon batch where 10 future posts are ready for bert and bow
+                        test_future_bert=0
+                        for test_each_future in test_batch_future_bert_items:
+                            test_each_batch_dict = {'input_ids': test_each_future[0].to(self.device), 'token_type_ids': test_each_future[1].to(self.device), 'attention_mask': test_each_future[2].to(self.device)}
+                            test_each_bert_embedding = self.bertmodel(**test_each_batch_dict)[1]
+                            test_future_bert += test_each_bert_embedding
+                        test_future_bert = test_each_bert_embedding/10.0
+                    else:
+                        test_future_batch_dict = {'input_ids': test_batch_future_bert_items[0].to(self.device), 'token_type_ids': test_batch_future_bert_items[1].to(self.device), 'attention_mask': test_batch_future_bert_items[2].to(self.device)}
+                        test_future_bert = self.bertmodel(**test_future_batch_dict)[1]
+                    
+                    test_query_bert = test_query_bert.to(self.device)
+                    test_future_bert = test_future_bert.to(self.device)
+                    
+                    # print(test_input_X.size())
+                    test_zx_mu, test_zx_log_var, test_zx = self.zx_encoder(test_input_X)
+                    test_zy_mu, test_zy_log_var, test_zy = self.zy_encoder(test_input_Y)
+                    test_feature_X = self.FE(test_input_X)
+                    test_feature_Y = self.FE(test_input_Y)
+                    test_zx_s_mu, test_zx_s_log_var, test_zx_s = self.zx_s_encoder(test_feature_X)
+                    test_zy_s_mu, test_zy_s_log_var, test_zy_s = self.zy_s_encoder(test_feature_Y)
+                    test_zs_mu, test_zs_log_var, test_zs = self.zs_encoder(test_feature_X, test_feature_Y)
+
+                    test_recon_X = self.x_decoder(test_zx, test_zs)
+                    test_recon_Y = self.y_decoder(test_zy, test_zs)
+                    
+                    # test_zs=torch.zeros_like(test_zs)
+                    # test_mlp_input = torch.cat((test_query_bert, test_zs/10), dim=1)
+                    
+                    # test_mlp_input = torch.cat((test_query_bert, test_zy_s), dim=1)
+                    
+                    #lines.append(str(test_zy_s.cpu().detach().numpy().tolist()))
+                    
+                    test_pred_cls_label = self.sphere_mlp(test_future_bert, test_recon_Y)
+
+                    
+                    # each_batch_test_loss, each_batch_mlp_loss = self.loss_function(test_recon_X, test_recon_Y, test_input_X, test_input_Y, 
+                    #                         test_zx_mu, test_zy_mu, test_zx_s_mu, test_zy_s_mu, test_zs_mu, 
+                    #                         test_zx_log_var, test_zy_log_var, test_zx_s_log_var, test_zy_s_log_var, test_zs_log_var, test_pred_cls_label, test_cls_label)
+                    # test_total_loss += each_batch_test_loss
+                    # test_mlp_loss += each_batch_mlp_loss
+                    
+                    
+                    
+                    test_pred_max_labels = test_pred_cls_label.argmax(dim=1)
+
+                    test_true = test_cls_label.cpu().numpy()
+                    test_pred = test_pred_max_labels.cpu().numpy()
+                    acc = (test_true - test_pred).tolist()
+                    for i in acc:
+                        test_all_count += 1
+                        if i == 0:
+                            test_true_count += 1
+                    
+                print('-'*10+'test: '+'-'*10)
+                # print('test_mlp_loss: '+str(test_mlp_loss/10))
+                # print('test_total_loss: '+str(test_total_loss/10))
+                print('test set accuracy: '+str(float(test_true_count/test_all_count)))
+                if self.global_iters==20000:
+                    f=open('test.csv', 'w')
+                    
+                    f.writelines(lines)
+            ################################################--pseudo--########################################################################    
+            
+            if self.global_iters == 4000:
+                test_total_loss = 0
+                test_mlp_loss = 0
+                test_true_count = 0
+                test_all_count = 0
+                
+                pseudo_label = []
+                for test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels, _ in tqdm(self.test_pseudo_data_loader):
+                    test_data = test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels
+
+               
+                    test_batch_query_bert_items, test_batch_future_bert_items, test_input_X, test_input_Y, test_cls_label = self.Unpack_Data(test_data)
+                    test_query_batch_dict = {'input_ids': test_batch_query_bert_items[0].to(self.device), 'token_type_ids': test_batch_query_bert_items[1].to(self.device), 'attention_mask': test_batch_query_bert_items[2].to(self.device)}
+                    test_query_bert = self.bertmodel(**test_query_batch_dict)[1] # (query_bert_embedding.size()): batch_size*768
+                    
+                    if len(test_batch_future_bert_items) == 10 and isinstance(test_batch_future_bert_items, list):
+                        # now the batch is for the recon batch where 10 future posts are ready for bert and bow
+                        test_future_bert=0
+                        for test_each_future in test_batch_future_bert_items:
+                            test_each_batch_dict = {'input_ids': test_each_future[0].to(self.device), 'token_type_ids': test_each_future[1].to(self.device), 'attention_mask': test_each_future[2].to(self.device)}
+                            test_each_bert_embedding = self.bertmodel(**test_each_batch_dict)[1]
+                            test_future_bert += test_each_bert_embedding
+                        test_future_bert = test_each_bert_embedding/10.0
+                    else:
+                        test_future_batch_dict = {'input_ids': test_batch_future_bert_items[0].to(self.device), 'token_type_ids': test_batch_future_bert_items[1].to(self.device), 'attention_mask': test_batch_future_bert_items[2].to(self.device)}
+                        test_future_bert = self.bertmodel(**test_future_batch_dict)[1]
+                    
+                    test_query_bert = test_query_bert.to(self.device)
+                    test_future_bert = test_future_bert.to(self.device)
+                    
+                    # print(test_input_X.size())
+                    test_zx_mu, test_zx_log_var, test_zx = self.zx_encoder(test_input_X)
+                    test_zy_mu, test_zy_log_var, test_zy = self.zy_encoder(test_input_Y)
+                    test_feature_X = self.FE(test_input_X)
+                    test_feature_Y = self.FE(test_input_Y)
+                    test_zx_s_mu, test_zx_s_log_var, test_zx_s = self.zx_s_encoder(test_feature_X)
+                    test_zy_s_mu, test_zy_s_log_var, test_zy_s = self.zy_s_encoder(test_feature_Y)
+                    test_zs_mu, test_zs_log_var, test_zs = self.zs_encoder(test_feature_X, test_feature_Y)
+
+                    test_recon_X = self.x_decoder(test_zx, test_zs)
+                    test_recon_Y = self.y_decoder(test_zy, test_zs)
+                    
+                    # test_zs=torch.zeros_like(test_zs)
+                    # test_mlp_input = torch.cat((test_query_bert, test_zs/10), dim=1)
+                    
+                    test_mlp_input = torch.cat((test_future_bert, test_zy_s), dim=1)
+                    
+                    #lines.append(str(test_zy_s.cpu().detach().numpy().tolist()))
+                    
+                    test_pred_cls_label = self.mlp(self.fc_mlp_ntm(test_mlp_input))
+
+                    
+                    # each_batch_test_loss, each_batch_mlp_loss = self.loss_function(test_recon_X, test_recon_Y, test_input_X, test_input_Y, 
+                    #                         test_zx_mu, test_zy_mu, test_zx_s_mu, test_zy_s_mu, test_zs_mu, 
+                    #                         test_zx_log_var, test_zy_log_var, test_zx_s_log_var, test_zy_s_log_var, test_zs_log_var, test_pred_cls_label, test_cls_label)
+                    # test_total_loss += each_batch_test_loss
+                    # test_mlp_loss += each_batch_mlp_loss
+                    
+                    test_pred_max_labels = test_pred_cls_label.argmax(dim=1)
+
+                    test_true = test_cls_label.cpu().numpy()
+                    test_pred = test_pred_max_labels.cpu().numpy()
+                    
+                    for label in list(test_pred):
+                        pseudo_label.append(str(label)+'\n')
+                        
+                    acc = (test_true - test_pred).tolist()
+                    for i in acc:
+                        test_all_count += 1
+                        if i == 0:
+                            test_true_count += 1
+                    
+                print('-'*10+'pseudo: '+'-'*10)
+                # print('test_mlp_loss: '+str(test_mlp_loss/10))
+                # print('test_total_loss: '+str(test_total_loss/10))
+                print('pseudo set accuracy: '+str(float(test_true_count/test_all_count)))
+                
+                
+                wf = open(self.path_to_data["pseudo_label"], 'w')
+                wf.writelines(pseudo_label)
+                
+                rf = open(self.path_to_data["time_train"], 'r')
+                rlines = rf.readlines()
+                newlines = []
+                for l_idx, line in enumerate(rlines):
+                    line = line.strip('\n').split('\t')
+                    truelabel, timelabel, query_txt, future_txt = line[0], line[1], line[2], line[3]
+                    pseudo_true_label = pseudo_label[l_idx]
+                    newlines.append(truelabel+'\t'+pseudo_true_label+'\t'+query_txt+'\t'+future_txt+'\n')
+                wwf = open(self.path_to_data["time_pseudo"], 'w')
+                wwf.writelines(newlines)
+                    
+            
+            ################################################--test--########################################################################
+            if self.global_iters % 100 == 0 and self.global_iters > self.sphere_max_iters:
+                test_total_loss = 0
+                test_mlp_loss = 0
+                test_true_count = 0
+                test_all_count = 0
+                
+                for test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels, _ in tqdm(self.test_data_loader):
+                    test_data = test_query_bert, test_future_bert, test_X_query_bows, test_future_bows, test_clas_labels
+
+               
+                    test_batch_query_bert_items, test_batch_future_bert_items, test_input_X, test_input_Y, test_cls_label = self.Unpack_Data(test_data)
+                    test_query_batch_dict = {'input_ids': test_batch_query_bert_items[0].to(self.device), 'token_type_ids': test_batch_query_bert_items[1].to(self.device), 'attention_mask': test_batch_query_bert_items[2].to(self.device)}
+                    test_query_bert = self.bertmodel(**test_query_batch_dict)[1] # (query_bert_embedding.size()): batch_size*768
+                    
+                    if len(test_batch_future_bert_items) == 10 and isinstance(test_batch_future_bert_items, list):
+                        # now the batch is for the recon batch where 10 future posts are ready for bert and bow
+                        test_future_bert=0
+                        for test_each_future in test_batch_future_bert_items:
+                            test_each_batch_dict = {'input_ids': test_each_future[0].to(self.device), 'token_type_ids': test_each_future[1].to(self.device), 'attention_mask': test_each_future[2].to(self.device)}
+                            test_each_bert_embedding = self.bertmodel(**test_each_batch_dict)[1]
+                            test_future_bert += test_each_bert_embedding
+                        test_future_bert = test_each_bert_embedding/10.0
+                    else:
+                        test_future_batch_dict = {'input_ids': test_batch_future_bert_items[0].to(self.device), 'token_type_ids': test_batch_future_bert_items[1].to(self.device), 'attention_mask': test_batch_future_bert_items[2].to(self.device)}
+                        test_future_bert = self.bertmodel(**test_future_batch_dict)[1]
+                    
+                    test_query_bert = test_query_bert.to(self.device)
+                    test_future_bert = test_future_bert.to(self.device)
+                    
+                    # print(test_input_X.size())
+                    test_zx_mu, test_zx_log_var, test_zx = self.zx_encoder(test_input_X)
+                    test_zy_mu, test_zy_log_var, test_zy = self.zy_encoder(test_input_Y)
+                    test_feature_X = self.FE(test_input_X)
+                    test_feature_Y = self.FE(test_input_Y)
+                    test_zx_s_mu, test_zx_s_log_var, test_zx_s = self.zx_s_encoder(test_feature_X)
+                    test_zy_s_mu, test_zy_s_log_var, test_zy_s = self.zy_s_encoder(test_feature_Y)
+                    test_zs_mu, test_zs_log_var, test_zs = self.zs_encoder(test_feature_X, test_feature_Y)
+
+                    test_recon_X = self.x_decoder(test_zx, test_zs)
+                    test_recon_Y = self.y_decoder(test_zy, test_zs)
+                    
+                    # test_zs=torch.zeros_like(test_zs)
+                    # test_mlp_input = torch.cat((test_query_bert, test_zs/10), dim=1)
+                    # print('*'*100)
+                    # print(test_query_bert)
+                    # print(test_zx_s)
+                    test_zx_s = torch.zeros_like(test_zx_s)
+                    test_mlp_input = torch.cat((test_query_bert, test_zx_s), dim=1)
+                    # test_mlp_input = torch.cat((test_temp, test_zs/10), dim=1)
+                    
+                    test_pred_cls_label = self.mlp(self.fc_mlp_ntm(test_mlp_input))
+
+                    
+                    # each_batch_test_loss, each_batch_mlp_loss = self.loss_function(test_recon_X, test_recon_Y, test_input_X, test_input_Y, 
+                    #                         test_zx_mu, test_zy_mu, test_zx_s_mu, test_zy_s_mu, test_zs_mu, 
+                    #                         test_zx_log_var, test_zy_log_var, test_zx_s_log_var, test_zy_s_log_var, test_zs_log_var, test_pred_cls_label, test_cls_label)
+                    # test_total_loss += each_batch_test_loss
+                    # test_mlp_loss += each_batch_mlp_loss
+                    
+                    test_pred_max_labels = test_pred_cls_label.argmax(dim=1)
+
+                    test_true = test_cls_label.cpu().numpy()
+                    test_pred = test_pred_max_labels.cpu().numpy()
+                    acc = (test_true - test_pred).tolist()
+                    for i in acc:
+                        test_all_count += 1
+                        if i == 0:
+                            test_true_count += 1
+                    
+                print('-'*10+'test: '+'-'*10)
+                # print('test_mlp_loss: '+str(test_mlp_loss/10))
+                # print('test_total_loss: '+str(test_total_loss/10))
+                print('test set accuracy: '+str(float(test_true_count/test_all_count)))
+
+    
     def test(self):
 
         # self.load_model(self.model_save_dir, self.test_iters)
